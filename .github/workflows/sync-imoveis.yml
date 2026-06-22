@@ -1,0 +1,32 @@
+name: Sync Imóveis
+
+on:
+  schedule:
+    - cron: '0 22 * * *'   # 22:00 UTC = 19:00 BRT, todo dia
+  workflow_dispatch:         # permite trigger manual pela UI do GitHub
+
+jobs:
+  sync:
+    name: Sincronizar imóveis do feed XML → Turso
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Executar sync
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          IMOVEIS_XML_URL: ${{ secrets.IMOVEIS_XML_URL }}
+        run: npm run sync:imoveis

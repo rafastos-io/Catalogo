@@ -1,0 +1,23 @@
+{
+  "name": "catalogo-sync",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sync incremental do feed XML de imóveis para Turso (libSQL)",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "sync:imoveis": "tsx scripts/sync-imoveis.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.14.0",
+    "fast-xml-parser": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
