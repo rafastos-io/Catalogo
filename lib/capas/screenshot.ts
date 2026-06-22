@@ -121,7 +121,7 @@ export async function screenshotHtml(html: string, opts: ScreenshotOptions): Pro
 export async function screenshotBatch<T>(
   items: Array<T & { html: string; opts: ScreenshotOptions }>,
   concurrency: number,
-  onResult?: (item: T, index: number, png: Buffer | null, error: Error | null) => void,
+  onResult?: (item: T, index: number, png: Buffer | null, error: Error | null) => void | Promise<void>,
 ): Promise<Array<{ index: number; png: Buffer | null; error: Error | null }>> {
   const results: Array<{ index: number; png: Buffer | null; error: Error | null }> = [];
   let cursor = 0;
@@ -135,10 +135,10 @@ export async function screenshotBatch<T>(
       try {
         const png = await screenshotHtml(item.html, item.opts);
         results[i] = { index: i, png, error: null };
-        onResult?.(item as T, i, png, null);
+        await onResult?.(item as T, i, png, null);
       } catch (err) {
         results[i] = { index: i, png: null, error: err instanceof Error ? err : new Error(String(err)) };
-        onResult?.(item as T, i, null, err instanceof Error ? err : new Error(String(err)));
+        await onResult?.(item as T, i, null, err instanceof Error ? err : new Error(String(err)));
       }
       completed++;
       if (completed % 50 === 0 || completed === items.length) {
