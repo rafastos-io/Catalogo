@@ -1,0 +1,19 @@
+{
+  "slug": "imovel-estatico-03",
+  "name": "Imóvel Estático 03",
+  "description": "Template full-bleed premium para destacar imóveis de alto padrão em São Paulo",
+  "input_type": "imovel",
+  "html_template": "imovel",
+  "html_variant": "imovel",
+  "formats": [
+    "1080x1080",
+    "1080x1350",
+    "1080x1920"
+  ],
+  "badge_format": null,
+  "is_active": true,
+  "sort_order": 3,
+  "photo_slots": null,
+  "default_payload_json": null,
+  "preview_url": "https://drqhlfvqkudmafaeshcd.supabase.co/storage/v1/object/public/art-previews/fb8a8d92-79f7-4da6-bb1e-942ca9a7b275-1781639866490.jpg"
+}

@@ -1,0 +1,71 @@
+name: Gerar Capas Imóveis
+
+on:
+  workflow_run:
+    workflows: ['Sync Imóveis']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Limit (dry-run, 0 = todos)'
+        required: false
+        default: '0'
+      concurrency:
+        description: 'Concurrency (renders paralelos)'
+        required: false
+        default: '10'
+      force:
+        description: 'Force (regerar tudo)'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  capas:
+    name: Gerar capas 1080x1080 e subir pro R2
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Instalar Chrome (Puppeteer)
+        run: |
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+          google-chrome --version
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Gerar capas
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
+          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
+        run: |
+          ARGS="--concurrency=${{ github.event.inputs.concurrency || '10' }}"
+          if [ "${{ github.event.inputs.limit || '0' }}" != "0" ]; then
+            ARGS="$ARGS --limit=${{ github.event.inputs.limit }}"
+          fi
+          if [ "${{ github.event.inputs.force == true }}" = "true" ]; then
+            ARGS="$ARGS --force"
+          fi
+          npm run capas:imoveis -- $ARGS

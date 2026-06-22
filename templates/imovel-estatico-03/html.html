@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html data-fmt="{{formato}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1080">
+<link href="{{fonte_url}}" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { width: 1080px; height: {{altura}}px; overflow: hidden; font-family: '{{fonte}}', sans-serif; background: {{cor_primaria}}; position: relative; }
+
+[data-fmt="1080x1080"] { --pad: 60px; --hero-size: 104px; --label-size: 18px; --price-size: 44px; --detail-size: 19px; --logo-h: 46px; --codigo-size: 15px; --broker-size: 17px; }
+[data-fmt="1080x1350"] { --pad: 72px; --hero-size: 132px; --label-size: 20px; --price-size: 50px; --detail-size: 21px; --logo-h: 52px; --codigo-size: 16px; --broker-size: 18px; }
+[data-fmt="1080x1920"] { --pad: 84px; --hero-size: 150px; --label-size: 23px; --price-size: 58px; --detail-size: 23px; --logo-h: 62px; --codigo-size: 18px; --broker-size: 22px; }
+
+img.bg-foto { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+.overlay { position: absolute; inset: 0; background:
+  linear-gradient(to bottom, rgba(12,12,13,0.34) 0%, rgba(12,12,13,0.04) 26%, rgba(10,10,10,0.10) 52%, rgba(8,8,9,0.66) 80%, rgba(6,6,7,0.92) 100%); }
+
+/* Moldura editorial fina */
+.frame { position: absolute; inset: calc(var(--pad) * 0.5); border: 1px solid rgba(255,255,255,0.16); pointer-events: none; }
+
+.logo-topleft { position: absolute; top: var(--pad); left: var(--pad); }
+.logo-topleft img { height: var(--logo-h); width: auto; object-fit: contain; filter: brightness(0) invert(1); }
+.codigo-topright { position: absolute; top: var(--pad); right: var(--pad); color: {{cor_acento}}; font-size: var(--codigo-size); font-weight: 500; letter-spacing: 0.26em; text-transform: uppercase; padding-top: 14px; }
+
+/* Bloco herói (acima do rodapé) */
+.hero-block { position: absolute; left: var(--pad); right: var(--pad); bottom: calc(var(--pad) + 188px); }
+[data-fmt="1080x1080"] .hero-block { bottom: calc(var(--pad) + 196px); }
+[data-fmt="1080x1350"] .hero-block { bottom: calc(var(--pad) + 196px); }
+[data-fmt="1080x1920"] .hero-block { bottom: calc(var(--pad) + 232px); }
+.label-row { display: flex; align-items: center; gap: 22px; margin-bottom: 22px; }
+.label-text { color: #f5f5f5; font-size: var(--label-size); font-weight: 500; letter-spacing: 0.28em; text-transform: uppercase; white-space: nowrap; }
+.label-line { flex: 1; height: 1px; background: {{cor_acento}}; opacity: 0.85; }
+.label-city { color: rgba(245,245,245,0.85); font-size: var(--label-size); font-weight: 400; letter-spacing: 0.22em; text-transform: uppercase; white-space: nowrap; }
+.hero { font-family: 'Cormorant Garamond', serif; color: #ffffff; font-size: var(--hero-size); font-weight: 500; line-height: 0.92; letter-spacing: -0.01em; }
+
+/* Rodapé */
+.bottom-block { position: absolute; left: var(--pad); right: var(--pad); bottom: var(--pad); }
+.accent-bar { width: 54px; height: 2px; background: {{cor_acento}}; margin-bottom: 20px; }
+.price-display { color: #f5f5f5; font-size: var(--price-size); font-weight: 700; letter-spacing: 0.01em; margin-bottom: 14px; }
+.details-line { color: #c8c8c8; font-size: var(--detail-size); font-weight: 300; letter-spacing: 0.16em; text-transform: uppercase; margin-bottom: 24px; }
+.bottom-divider { width: 100%; height: 1px; background: rgba(255,255,255,0.14); margin-bottom: 18px; }
+.broker-footer { display: flex; justify-content: space-between; align-items: flex-end; }
+.broker-name { color: #f5f5f5; font-size: var(--broker-size); font-weight: 600; letter-spacing: 0.05em; }
+.broker-creci { color: #9a9a9b; font-size: 14px; font-weight: 400; letter-spacing: 0.10em; margin-top: 5px; }
+[data-fmt="1080x1920"] .broker-creci { font-size: 16px; }
+.brand-name { color: {{cor_acento}}; font-size: 14px; font-weight: 400; letter-spacing: 0.18em; text-transform: uppercase; font-family: 'Cormorant Garamond', serif; font-style: italic; }
+[data-fmt="1080x1920"] .brand-name { font-size: 17px; }
+</style>
+</head>
+<body>
+<img class="bg-foto" src="{{foto_url}}" alt="">
+<div class="overlay"></div>
+<div class="frame"></div>
+<div class="logo-topleft"><img src="{{logo_url_escuro}}" alt="{{nome_marca}}"></div>
+<div class="codigo-topright">{{codigo}}</div>
+
+<div class="hero-block">
+  <div class="label-row">
+    <span class="label-text">{{tipo}}</span>
+    <div class="label-line"></div>
+    <span class="label-city">{{cidade}}</span>
+  </div>
+  <div class="hero">{{bairro}}</div>
+</div>
+
+<div class="bottom-block">
+  <div class="accent-bar"></div>
+  <div class="price-display">{{valor}}</div>
+  <div class="details-line">{{area_util}}  ·  {{quartos}} quartos  ·  {{suites}} suítes  ·  {{vagas}} vagas</div>
+  <div class="bottom-divider"></div>
+  <div class="broker-footer">
+    <div>
+      <div class="broker-name">{{nome_corretor}}</div>
+      <div class="broker-creci">CRECI {{creci}}</div>
+    </div>
+    <div class="brand-name">{{nome_marca}}</div>
+  </div>
+</div>
+</body>
+</html>

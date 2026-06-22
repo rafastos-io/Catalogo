@@ -24,6 +24,7 @@ import {
   toImageUrls,
   toCustomFields,
   toInternalLabels,
+  toImageUrlsWithCapa,
   toName,
   toHomeListingGroupId,
   toAgentCompany,
@@ -59,8 +60,7 @@ const CSV_COLUMNS: Array<{ key: string; get: (i: ImovelFB) => string | null }> =
   { key: 'description', get: (i) => (i.descricao ?? '').slice(0, 5000) || null },
   { key: 'availability', get: (i) => toAvailability(i) },
   { key: 'price', get: (i) => toPrice(i) },
-  { key: 'image[0].url', get: (i) => toImageUrls(i)[0] ?? null },
-  { key: 'image[0].tag[0]', get: (_i) => 'Foto principal' },
+  // image[0..N] geradas dinamicamente no loop (capa + fotos originais)
   { key: 'url', get: (i) => i.url_portal },
   { key: 'address.addr1', get: (i) => toAddress(i).addr1 },
   { key: 'address.addr2', get: (i) => toAddress(i).addr2 },
@@ -132,10 +132,11 @@ function gerarCsv(
   outPath: string,
   maxImages: number,
   maxArray: number,
+  capasMap: Map<string, string>,
 ): void {
-  // Cabeçalho dinâmico: colunas fixas + image[1..N] + arrays indexados
+  // Cabeçalho dinâmico: colunas fixas + image[0..N] + arrays indexados
   const header: string[] = CSV_COLUMNS.map((c) => c.key);
-  for (let n = 1; n < maxImages; n++) {
+  for (let n = 0; n < maxImages; n++) {
     header.push(`image[${n}].url`);
     header.push(`image[${n}].tag[0]`);
   }
@@ -159,11 +160,12 @@ function gerarCsv(
   for (const im of imoveis) {
     const row: string[] = CSV_COLUMNS.map((c) => csvEscape(c.get(im)));
 
-    // Imagens 1..N
-    const imgs = toImageUrls(im);
-    for (let n = 1; n < maxImages; n++) {
+    // Imagens 0..N: capa (se houver) + fotos originais
+    const capaUrl = capasMap.get(im.codigo.toUpperCase()) ?? null;
+    const { urls: imgs, tags: imgTags } = toImageUrlsWithCapa(im, capaUrl);
+    for (let n = 0; n < maxImages; n++) {
       row.push(csvEscape(imgs[n] ?? null));
-      row.push(''); // tag — opcional, deixamos vazio
+      row.push(csvEscape(imgTags[n] ?? null));
     }
 
     // Arrays
@@ -190,6 +192,7 @@ function gerarXml(
   outPath: string,
   feedTitle: string,
   maxImages: number,
+  capasMap: Map<string, string>,
 ): void {
   const parts: string[] = [];
   parts.push('<?xml version="1.0" encoding="utf-8"?>');
@@ -198,7 +201,9 @@ function gerarXml(
 
   for (const im of imoveis) {
     const addr = toAddress(im);
-    const imgs = toImageUrls(im).slice(0, maxImages);
+    const capaUrl = capasMap.get(im.codigo.toUpperCase()) ?? null;
+    const { urls: imgs, tags: imgTags } = toImageUrlsWithCapa(im, capaUrl);
+    const imgsSliced = imgs.slice(0, maxImages);
     const amenities = toBuildingAmenities(im);
     const features = toUnitFeatures(im);
     const tags = toProductTags(im);
@@ -207,11 +212,11 @@ function gerarXml(
     const days = toDaysOnMarket(im);
 
     parts.push('  <listing>');
-    // Imagens (primeira com tag, restante sem)
-    for (let n = 0; n < imgs.length; n++) {
+    // Imagens: capa (com tag "Capa") + fotos originais (com tag "Foto original")
+    for (let n = 0; n < imgsSliced.length; n++) {
       parts.push('    <image>');
-      parts.push(`      <url>${xmlEscape(imgs[n])}</url>`);
-      if (n === 0) parts.push('      <tag>Foto principal</tag>');
+      parts.push(`      <url>${xmlEscape(imgsSliced[n])}</url>`);
+      if (imgTags[n]) parts.push(`      <tag>${xmlEscape(imgTags[n])}</tag>`);
       parts.push('    </image>');
     }
     parts.push(`    <home_listing_id>${xmlEscape(im.codigo)}</home_listing_id>`);
@@ -353,19 +358,28 @@ export async function gerarFeedFacebook(opts: FeedOptions): Promise<FeedResult> 
   }
   console.info(`[fb-feed] ${imoveis.length} imoveis ativos carregados`);
 
+  // Lê mapa de capas geradas (codigo uppercase → capa_url no R2)
+  console.info('[fb-feed] Lendo capas_imoveis do Turso...');
+  const capasRs = await client.execute('SELECT codigo, capa_url FROM capas_imoveis');
+  const capasMap = new Map<string, string>();
+  for (const row of capasRs.rows) {
+    capasMap.set(String(row.codigo).toUpperCase(), String(row.capa_url));
+  }
+  console.info(`[fb-feed] ${capasMap.size} capas disponíveis (R2)`);
+
   let csvPath: string | null = null;
   let xmlPath: string | null = null;
 
   if (opts.format === 'csv' || opts.format === 'both') {
     csvPath = `${opts.outDir}/${opts.csvFileName ?? 'facebook-home-listings.csv'}`;
     console.info(`[fb-feed] Gerando CSV: ${csvPath}`);
-    gerarCsv(imoveis, csvPath, maxImages, maxArray);
+    gerarCsv(imoveis, csvPath, maxImages, maxArray, capasMap);
   }
 
   if (opts.format === 'xml' || opts.format === 'both') {
     xmlPath = `${opts.outDir}/${opts.xmlFileName ?? 'facebook-home-listings.xml'}`;
     console.info(`[fb-feed] Gerando XML: ${xmlPath}`);
-    gerarXml(imoveis, xmlPath, feedTitle, maxImages);
+    gerarXml(imoveis, xmlPath, feedTitle, maxImages, capasMap);
   }
 
   client.close();

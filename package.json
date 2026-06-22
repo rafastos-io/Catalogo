@@ -10,11 +10,14 @@
   "scripts": {
     "sync:imoveis": "tsx scripts/sync-imoveis.ts",
     "feed:facebook": "tsx scripts/gerar-feed-facebook.ts",
+    "capas:imoveis": "tsx scripts/gerar-capas-imoveis.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.658.0",
     "@libsql/client": "^0.14.0",
-    "fast-xml-parser": "^4.5.0"
+    "fast-xml-parser": "^4.5.0",
+    "puppeteer-core": "^23.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.5.0",

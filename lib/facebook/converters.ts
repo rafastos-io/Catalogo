@@ -392,6 +392,30 @@ export function toImageUrls(i: ImovelFB): string[] {
   return urls;
 }
 
+/**
+ * Como toImageUrls, mas injeta a capa gerada (R2) como image[0].
+ * Se não houver capa, cai pro comportamento original (foto principal primeiro).
+ *
+ * @param capaUrl  URL da capa no R2, ou null se não gerada
+ * @returns { urls, tags } — urls[0]=capa (se houver), tags paralelas
+ */
+export function toImageUrlsWithCapa(
+  i: ImovelFB,
+  capaUrl: string | null,
+): { urls: string[]; tags: string[] } {
+  const originais = toImageUrls(i);
+  if (capaUrl) {
+    return {
+      urls: [capaUrl, ...originais],
+      tags: ['Capa', ...originais.map(() => 'Foto original')],
+    };
+  }
+  return {
+    urls: originais,
+    tags: originais.map((_, n) => (n === 0 ? 'Foto principal' : 'Foto original')),
+  };
+}
+
 // ── Custom labels / numbers (slots livres) — ver §5 ─────────────────────────
 
 export interface CustomFields {

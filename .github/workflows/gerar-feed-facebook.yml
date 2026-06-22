@@ -2,7 +2,7 @@ name: Gerar Feed Facebook
 
 on:
   workflow_run:
-    workflows: ['Sync Imóveis']
+    workflows: ['Gerar Capas Imóveis']
     types: [completed]
   workflow_dispatch:
 
