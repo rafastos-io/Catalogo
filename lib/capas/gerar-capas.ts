@@ -124,19 +124,31 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
 
   // Pré-filtra quem já tem PNG no R2 (evita re-render quando capa existe mas
   // capas_imoveis está desatualizada — edge case de migrations).
-  // Só vale a pena se NÃO for force.
+  // Skip inteiro se capasMap vazio (fresh load: todos precisam render mesmo).
+  // Skip se force (vai regerar tudo independente).
   let renderList: ImovelRow[] = toProcess;
-  if (!force && toProcess.length > 0) {
-    console.info('[capas] Checando existência no R2 (HEAD) pra skips adicionais...');
+  if (!force && capasMap.size > 0 && toProcess.length > 0) {
+    console.info('[capas] Checando existência no R2 (HEAD paralelo) pra skips adicionais...');
     const skipR2: ImovelRow[] = [];
     const needRender: ImovelRow[] = [];
-    for (const im of toProcess) {
-      // Key versionado com ultima_atualizacao — se imóvel atualizou, key muda,
-      // HEAD retorna false, e regenera. Cache CDN imutável por versão.
-      const exists = await objectExists(capaKey(im.codigo, im.ultima_atualizacao));
-      if (exists) skipR2.push(im);
-      else needRender.push(im);
+    // HEAD checks paralelos (concurrency = 20) pra não bloquear
+    const HEAD_CONCURRENCY = 20;
+    let headCursor = 0;
+    async function headWorker() {
+      while (true) {
+        const i = headCursor++;
+        if (i >= toProcess.length) return;
+        const im = toProcess[i];
+        try {
+          const exists = await objectExists(capaKey(im.codigo, im.ultima_atualizacao));
+          if (exists) skipR2.push(im);
+          else needRender.push(im);
+        } catch {
+          needRender.push(im); // em caso de erro no HEAD, renderiza
+        }
+      }
     }
+    await Promise.all(Array.from({ length: Math.min(HEAD_CONCURRENCY, toProcess.length) }, () => headWorker()));
     console.info(`[capas]   ${skipR2.length} já no R2 (skip) · ${needRender.length} precisam render`);
     renderList = needRender;
     // Pra quem já tá no R2 mas não está em capas_imoveis, atualiza o banco
