@@ -92,9 +92,20 @@ export function publicUrlFor(key: string): string {
   return `${cfg.publicUrl}/${key}`;
 }
 
-/** Key padrão do PNG da capa: {codigo}.png (sempre uppercase pra bater com Turso). */
-export function capaKey(codigo: string): string {
-  return `${codigo.toUpperCase()}.png`;
+/**
+ * Key padrão do PNG da capa: {codigo}_{ultima_atualizacao}.png
+ * Versão com data no nome → URL única por versão → cache CDN imutável sem
+ * risco de servir capa antiga quando o imóvel é atualizado e regerado.
+ * Se ultimaAtualizacao for null/vazio, usa só o codigo (compat).
+ */
+export function capaKey(codigo: string, ultimaAtualizacao?: string | null): string {
+  const code = codigo.toUpperCase();
+  if (ultimaAtualizacao && ultimaAtualizacao.trim()) {
+    // remove hifens da data ISO (2026-06-21 → 20260621) pra key mais limpa
+    const ver = ultimaAtualizacao.replace(/-/g, '').slice(0, 8);
+    return `${code}_${ver}.png`;
+  }
+  return `${code}.png`;
 }
 
 /** Fecha o client (chamar no fim do processo). */

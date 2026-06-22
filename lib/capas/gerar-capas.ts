@@ -131,7 +131,9 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
     const skipR2: ImovelRow[] = [];
     const needRender: ImovelRow[] = [];
     for (const im of toProcess) {
-      const exists = await objectExists(capaKey(im.codigo));
+      // Key versionado com ultima_atualizacao — se imóvel atualizou, key muda,
+      // HEAD retorna false, e regenera. Cache CDN imutável por versão.
+      const exists = await objectExists(capaKey(im.codigo, im.ultima_atualizacao));
       if (exists) skipR2.push(im);
       else needRender.push(im);
     }
@@ -139,7 +141,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
     renderList = needRender;
     // Pra quem já tá no R2 mas não está em capas_imoveis, atualiza o banco
     for (const im of skipR2) {
-      const capaUrl = publicUrlFor(capaKey(im.codigo));
+      const capaUrl = publicUrlFor(capaKey(im.codigo, im.ultima_atualizacao));
       await turso.execute({
         sql: `INSERT INTO capas_imoveis (codigo, capa_url, ultima_atualizacao_gerada, gerado_em) VALUES (?, ?, ?, ?) ON CONFLICT(codigo) DO UPDATE SET capa_url=excluded.capa_url, ultima_atualizacao_gerada=excluded.ultima_atualizacao_gerada, gerado_em=excluded.gerado_em`,
         args: [im.codigo.toUpperCase(), capaUrl, im.ultima_atualizacao ?? null, new Date().toISOString()],
@@ -172,7 +174,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
       return;
     }
     try {
-      const key = capaKey(im.codigo);
+      const key = capaKey(im.codigo, im.ultima_atualizacao);
       const capaUrl = await uploadPng(key, png);
       // Atualiza capas_imoveis
       await turso.execute({
