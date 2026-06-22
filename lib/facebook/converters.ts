@@ -196,33 +196,33 @@ function slugify(s: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
+// ── Sinais de intenção (venda/locação) baseados em PREÇO, não em finalidade ──
+// finalidade no XML ValueGaia é a CATEGORIA (Residencial/Comercial/...).
+// tipo_oferta é sempre "1" (inútil). A intenção real vem de quais preços existem.
+
+const hasVenda = (i: ImovelFB): boolean => i.valor_venda != null && i.valor_venda > 0;
+const hasAluguel = (i: ImovelFB): boolean => i.valor_aluguel != null && i.valor_aluguel > 0;
+
 // ── Conversões de enum ───────────────────────────────────────────────────────
 
-/** availability — ver §6.1 do de-para. */
+/** availability — ver §6.1 do de-para. Usa preços como sinal primário. */
 export function toAvailability(i: ImovelFB): string {
   if (i.vendido_alugado === 1) {
-    if (containsCI(i.finalidade, 'loca') || containsCI(i.finalidade, 'alug')) return 'rented';
-    return 'sold';
+    if (hasVenda(i)) return 'sold';
+    if (hasAluguel(i)) return 'rented';
+    return 'unavailable';
   }
   if (i.status_anuncio && i.status_anuncio.toLowerCase() === 'inativo') return 'unavailable';
-  if (containsCI(i.finalidade, 'loca') || containsCI(i.finalidade, 'alug')) return 'for_rent';
-  if (containsCI(i.finalidade, 'venda')) return 'for_sale';
-  // Comercial/Industrial/Rural sem "Venda"/"Locação" explícita → assume venda
-  if (containsCI(i.finalidade, 'comercial') || containsCI(i.finalidade, 'industrial') ||
-      containsCI(i.finalidade, 'rural') || containsCI(i.finalidade, 'temporada')) return 'for_sale';
-  return 'available_soon';
+  if (hasAluguel(i) && !hasVenda(i)) return 'for_rent';
+  if (hasVenda(i)) return 'for_sale'; // "ambos" → venda é primária
+  return 'unavailable'; // sem preço = não anunciável
 }
 
-/** price — ver §6.2. Prioriza venda se ambos existirem. */
+/** price — ver §6.2. Venda é primária quando ambos existem; senão aluguel. */
 export function toPrice(i: ImovelFB): string | null {
-  if (containsCI(i.finalidade, 'loca') && !containsCI(i.finalidade, 'venda')) {
-    return formatMoneyBRL(i.valor_aluguel);
-  }
-  if (containsCI(i.finalidade, 'venda')) {
-    return formatMoneyBRL(i.valor_venda);
-  }
-  // fallback: o que existir
-  return formatMoneyBRL(i.valor_venda) ?? formatMoneyBRL(i.valor_aluguel);
+  if (hasVenda(i)) return formatMoneyBRL(i.valor_venda);
+  if (hasAluguel(i)) return formatMoneyBRL(i.valor_aluguel);
+  return null;
 }
 
 /** property_type — ver §6.3. */
@@ -238,17 +238,19 @@ export function toPropertyType(i: ImovelFB): string {
   return 'other';
 }
 
-/** listing_type — ver §6.4. */
+/** listing_type — ver §6.4. Usa preços como sinal primário. */
 export function toListingType(i: ImovelFB): string {
   const exclusivo = containsCI(i.exclusividade, 'sim') || i.exclusividade === '1';
-  const ehVenda = containsCI(i.finalidade, 'venda');
-  const ehLoc = containsCI(i.finalidade, 'loca') || containsCI(i.finalidade, 'alug');
+  const ehVenda = hasVenda(i);
+  const ehLoc = hasAluguel(i);
   if (i.vendido_alugado === 1) {
-    if (ehLoc && !ehVenda) return 'recently_rented';
+    if (ehVenda) return 'recently_sold';
+    if (ehLoc) return 'recently_rented';
     return 'recently_sold';
   }
+  // Aluguel-only → locação. Ambos ou venda-only → venda.
+  if (ehLoc && !ehVenda) return exclusivo ? 'for_rent_by_agent' : 'for_rent_by_owner';
   if (ehVenda) return exclusivo ? 'for_sale_by_agent' : 'for_sale_by_owner';
-  if (ehLoc) return exclusivo ? 'for_rent_by_agent' : 'for_rent_by_owner';
   return 'for_sale';
 }
 
@@ -441,11 +443,9 @@ export function toAgentCompany(i: ImovelFB): string | null {
   return i.filial ?? null;
 }
 
-/** min_price / max_price — para imóveis com venda+locação simultâneos. */
+/** min_price / max_price — para imóveis com venda+locação simultâneos (ambos preços). */
 export function toMinMaxPrice(i: ImovelFB): { min: string | null; max: string | null } {
-  const ehVenda = containsCI(i.finalidade, 'venda');
-  const ehLoc = containsCI(i.finalidade, 'loca') || containsCI(i.finalidade, 'alug');
-  if (ehVenda && ehLoc) {
+  if (hasVenda(i) && hasAluguel(i)) {
     return {
       min: formatMoneyBRL(i.valor_aluguel),
       max: formatMoneyBRL(i.valor_venda),
