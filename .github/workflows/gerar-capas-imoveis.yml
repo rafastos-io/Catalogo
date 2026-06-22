@@ -67,7 +67,7 @@ jobs:
           if [ "${{ github.event.inputs.limit || '0' }}" != "0" ]; then
             ARGS="$ARGS --limit=${{ github.event.inputs.limit }}"
           fi
-          if [ "${{ github.event.inputs.force == true }}" = "true" ]; then
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
             ARGS="$ARGS --force"
           fi
           npm run capas:imoveis -- $ARGS
