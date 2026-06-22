@@ -31,8 +31,12 @@ novos ou alterados.
 | Arquivo | Papel |
 |---|---|
 | `.github/workflows/sync-imoveis.yml` | Gatilho — cron diário + secrets |
+| `.github/workflows/gerar-feed-facebook.yml` | Gatilho — após sync, gera e publica feed Facebook |
 | `scripts/sync-imoveis.ts` | Runner standalone (entry point) — budget 10 min |
+| `scripts/gerar-feed-facebook.ts` | Runner do feed Facebook |
 | `lib/sync/xml-imoveis.ts` | Núcleo: fetch XML, parse, diff incremental, upsert |
+| `lib/facebook/converters.ts` | Conversores puros (Turso → Facebook enums/formatos) |
+| `lib/facebook/gerar-feed.ts` | Gera CSV + XML no formato Home Listings |
 | `schema.sql` | Schema da tabela `imoveis` (referência) |
 
 ## Variáveis de ambiente (GitHub Secrets)
@@ -42,6 +46,14 @@ novos ou alterados.
 | `TURSO_DATABASE_URL` | URL `libsql://` do banco Turso |
 | `TURSO_AUTH_TOKEN` | Token de acesso (full-access) |
 | `IMOVEIS_XML_URL` | URL do feed XML externo de imóveis |
+
+## Scripts npm
+
+| Script | O que faz |
+|---|---|
+| `npm run sync:imoveis` | Sincroniza XML → Turso (incremental) |
+| `npm run feed:facebook` | Gera feed Facebook (CSV + XML) em `out/` |
+| `npm run typecheck` | Verifica tipos TypeScript |
 
 ## Rodar localmente
 
@@ -53,9 +65,22 @@ npm run sync:imoveis
 
 ## Disparar manualmente
 
-- **GitHub:** aba *Actions* → *Sync Imóveis* → *Run workflow*.
-- A primeira execução faz carga completa (banco vazio). As seguintes são
-  incrementais (só reescreve imóveis cuja `ultima_atualizacao` mudou).
+- **Sync:** GitHub → aba *Actions* → *Sync Imóveis* → *Run workflow*.
+- **Feed Facebook:** GitHub → aba *Actions* → *Gerar Feed Facebook* → *Run workflow*.
+- O feed também roda automaticamente após cada sync bem-sucedido.
+
+## Feed Facebook (Home Listings)
+
+Após rodar, o workflow publica os arquivos na branch `feed` (orphan, 1 commit):
+
+- **CSV:** `https://raw.githubusercontent.com/rafastos-io/Catalogo/feed/facebook-home-listings.csv`
+- **XML:** `https://raw.githubusercontent.com/rafastos-io/Catalogo/feed/facebook-home-listings.xml`
+
+Use uma dessas URLs no **Facebook Commerce Manager** → *Catalog* → *Data Sources*
+→ *Add feed* → *Scheduled feed*. O Facebook busca diariamente.
+
+O mapeamento completo campo-a-campo está em
+`../exports-funcionalidades/de-para-facebook-home-listings.md`.
 
 ## Notas sobre a migração Supabase → Turso
 

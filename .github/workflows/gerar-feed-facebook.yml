@@ -1,0 +1,63 @@
+name: Gerar Feed Facebook
+
+on:
+  workflow_run:
+    workflows: ['Sync Imóveis']
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  feed:
+    name: Gerar CSV/XML e publicar na branch feed
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout (main)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Gerar feed (CSV + XML)
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: npm run feed:facebook -- --out=out
+
+      - name: Publicar na branch feed (orphan, 1 commit)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Cria branch órfã (sem histórico) e aponta para ela
+          git checkout --orphan feed
+          git reset --hard
+
+          # Move os arquivos gerados para a raiz da branch feed
+          cp out/facebook-home-listings.csv .
+          cp out/facebook-home-listings.xml .
+
+          # Commita só o feed (fora node_modules, etc.)
+          git add facebook-home-listings.csv facebook-home-listings.xml
+          git commit -m "feed: $(date -u '+%Y-%m-%d %H:%M') UTC — $(wc -l < facebook-home-listings.csv) linhas"
+
+          # Force push sobrescreve a branch feed (mantém 1 commit só)
+          git push origin feed --force
+
+      - name: Resumo
+        run: |
+          echo "✅ Feed publicado:"
+          echo "   CSV: https://raw.githubusercontent.com/${{ github.repository }}/feed/facebook-home-listings.csv"
+          echo "   XML: https://raw.githubusercontent.com/${{ github.repository }}/feed/facebook-home-listings.xml"

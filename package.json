@@ -9,6 +9,7 @@
   },
   "scripts": {
     "sync:imoveis": "tsx scripts/sync-imoveis.ts",
+    "feed:facebook": "tsx scripts/gerar-feed-facebook.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
