@@ -9,9 +9,9 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body { width: 1080px; height: {{altura}}px; overflow: hidden; font-family: '{{fonte}}', sans-serif; background: {{cor_primaria}}; position: relative; }
 
-[data-fmt="1080x1080"] { --pad: 60px; --hero-size: 104px; --label-size: 18px; --price-size: 44px; --detail-size: 19px; --logo-h: 46px; --codigo-size: 15px; --broker-size: 17px; }
-[data-fmt="1080x1350"] { --pad: 72px; --hero-size: 132px; --label-size: 20px; --price-size: 50px; --detail-size: 21px; --logo-h: 52px; --codigo-size: 16px; --broker-size: 18px; }
-[data-fmt="1080x1920"] { --pad: 84px; --hero-size: 150px; --label-size: 23px; --price-size: 58px; --detail-size: 23px; --logo-h: 62px; --codigo-size: 18px; --broker-size: 22px; }
+[data-fmt="1080x1080"] { --pad: 60px; --hero-size: 104px; --label-size: 18px; --price-size: 44px; --detail-size: 22px; --logo-h: 46px; --codigo-size: 15px; --broker-size: 17px; }
+[data-fmt="1080x1350"] { --pad: 72px; --hero-size: 132px; --label-size: 20px; --price-size: 50px; --detail-size: 24px; --logo-h: 52px; --codigo-size: 16px; --broker-size: 18px; }
+[data-fmt="1080x1920"] { --pad: 84px; --hero-size: 150px; --label-size: 23px; --price-size: 58px; --detail-size: 26px; --logo-h: 62px; --codigo-size: 18px; --broker-size: 22px; }
 
 img.bg-foto { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
 .overlay { position: absolute; inset: 0; background:
@@ -68,7 +68,7 @@ img.bg-foto { position: absolute; inset: 0; width: 100%; height: 100%; object-fi
 <div class="bottom-block">
   <div class="accent-bar"></div>
   <div class="price-display">{{valor}}</div>
-  <div class="details-line">{{area_util}}  ·  {{quartos}} quartos  ·  {{suites}} suítes  ·  {{vagas}} vagas</div>
+  <div class="details-line">{{ficha}}</div>
   <div class="bottom-divider"></div>
   <div class="broker-footer">
     <div>

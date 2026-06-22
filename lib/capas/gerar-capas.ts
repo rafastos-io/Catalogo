@@ -37,7 +37,7 @@ function loadTemplateHtml(slug: string): string {
 // Colunas necessárias do Turso pra montar o token map
 const COLS_IMOVEL = [
   'codigo', 'tipo_imovel', 'subtipo_imovel', 'bairro', 'cidade', 'finalidade',
-  'quartos', 'suites', 'banheiros', 'vagas', 'area_util',
+  'quartos', 'suites', 'banheiros', 'salas', 'vagas', 'area_util',
   'valor_venda', 'valor_aluguel', 'foto_principal_url', 'fotos_urls', 'ultima_atualizacao',
 ].join(', ');
 

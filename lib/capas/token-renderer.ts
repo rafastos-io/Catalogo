@@ -13,6 +13,7 @@ export interface ImovelDados {
   quartos: number | null;
   suites: number | null;
   banheiros: number | null;
+  salas: number | null;
   vagas: number | null;
   area_util: number | null;
   valor_venda: number | null;
@@ -49,6 +50,35 @@ function formatBRL(v: number | null): string {
 function coalesce<T>(...vals: Array<T | null | undefined>): T | null {
   for (const v of vals) if (v != null) return v;
   return null;
+}
+
+// ── Ficha adaptativa ─────────────────────────────────────────────────────────
+
+/**
+ * Linha de specs pronta, adaptada à finalidade, omitindo zeros.
+ * - Residencial: "Área · N quartos · N suítes · N vagas"
+ * - Comercial/Corporativa/Industrial: "Área · N salas · N banheiros · N vagas"
+ * - Rural/Temporada: usa layout residencial como fallback
+ */
+function buildFicha(im: ImovelDados): string {
+  const parts: string[] = [];
+  if (im.area_util != null && im.area_util > 0) parts.push(`${im.area_util} m²`);
+
+  const ehComercial = containsCI(im.finalidade, 'comercial') ||
+                      containsCI(im.finalidade, 'corporativa') ||
+                      containsCI(im.finalidade, 'industrial');
+
+  if (ehComercial) {
+    if (im.salas != null && im.salas > 0) parts.push(`${im.salas} ${im.salas === 1 ? 'sala' : 'salas'}`);
+    if (im.banheiros != null && im.banheiros > 0) parts.push(`${im.banheiros} ${im.banheiros === 1 ? 'banheiro' : 'banheiros'}`);
+    if (im.vagas != null && im.vagas > 0) parts.push(`${im.vagas} ${im.vagas === 1 ? 'vaga' : 'vagas'}`);
+  } else {
+    if (im.quartos != null && im.quartos > 0) parts.push(`${im.quartos} ${im.quartos === 1 ? 'quarto' : 'quartos'}`);
+    if (im.suites != null && im.suites > 0) parts.push(`${im.suites} ${im.suites === 1 ? 'suíte' : 'suítes'}`);
+    if (im.vagas != null && im.vagas > 0) parts.push(`${im.vagas} ${im.vagas === 1 ? 'vaga' : 'vagas'}`);
+  }
+
+  return parts.join('  ·  ');
 }
 
 // ── Token map ────────────────────────────────────────────────────────────────
@@ -127,7 +157,7 @@ export function buildTokenMap(
     finalidade: im.finalidade ?? '',
     subtipo: im.subtipo_imovel ?? '',
     foto_url: fotoUrl,
-    ficha: '',
+    ficha: buildFicha(im),
   };
 }
 
