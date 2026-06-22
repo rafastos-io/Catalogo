@@ -23,6 +23,7 @@ import {
   toProductTags,
   toImageUrls,
   toCustomFields,
+  toInternalLabels,
   toName,
   toHomeListingGroupId,
   toAgentCompany,
@@ -95,12 +96,9 @@ const CSV_COLUMNS: Array<{ key: string; get: (i: ImovelFB) => string | null }> =
   { key: 'home_listing_group_id', get: (i) => toHomeListingGroupId(i) },
   { key: 'min_price', get: (i) => toMinMaxPrice(i).min },
   { key: 'max_price', get: (i) => toMinMaxPrice(i).max },
-  // custom labels/numbers
-  { key: 'custom_label_0', get: (i) => toCustomFields(i).custom_label_0 },
-  { key: 'custom_label_1', get: (i) => toCustomFields(i).custom_label_1 },
-  { key: 'custom_label_2', get: (i) => toCustomFields(i).custom_label_2 },
-  { key: 'custom_label_3', get: (i) => toCustomFields(i).custom_label_3 },
-  { key: 'custom_label_4', get: (i) => toCustomFields(i).custom_label_4 },
+  // custom labels/numbers — split inteligente (ver converters.toCustomFields)
+  { key: 'custom_label_0', get: (i) => toCustomFields(i).custom_label_0 }, // tipo_imovel
+  { key: 'custom_label_1', get: (i) => toCustomFields(i).custom_label_1 }, // bairro
   { key: 'custom_number_0', get: (i) => { const v = toCustomFields(i).custom_number_0; return v != null ? String(v) : null; } },
   { key: 'custom_number_1', get: (i) => { const v = toCustomFields(i).custom_number_1; return v != null ? String(v) : null; } },
   { key: 'custom_number_2', get: (i) => { const v = toCustomFields(i).custom_number_2; return v != null ? String(v) : null; } },
@@ -150,6 +148,11 @@ function gerarCsv(
   for (let n = 0; n < maxArray; n++) {
     header.push(`product_tags[${n}]`);
   }
+  // internal_label — até 3 (finalidade, padrao, cod_aux)
+  const maxInternal = 3;
+  for (let n = 0; n < maxInternal; n++) {
+    header.push(`internal_label[${n}]`);
+  }
 
   const lines: string[] = [header.join(',')];
 
@@ -170,6 +173,10 @@ function gerarCsv(
     for (let n = 0; n < maxArray; n++) row.push(csvEscape(amenities[n] ?? null));
     for (let n = 0; n < maxArray; n++) row.push(csvEscape(features[n] ?? null));
     for (let n = 0; n < maxArray; n++) row.push(csvEscape(tags[n] ?? null));
+
+    // internal_label
+    const internal = toInternalLabels(im);
+    for (let n = 0; n < maxInternal; n++) row.push(csvEscape(internal[n] ?? null));
 
     lines.push(row.join(','));
   }
@@ -271,18 +278,19 @@ function gerarXml(
     for (const f of features) parts.push(`    <unit_features>${xmlEscape(f)}</unit_features>`);
     for (const t of tags) parts.push(`    <product_tags>${xmlEscape(t)}</product_tags>`);
 
-    // Custom
+    // Custom labels (split: só 0 e 1 vão como custom_label — ver converters)
     const cf = toCustomFields(im);
     if (cf.custom_label_0) parts.push(`    <custom_label_0>${xmlEscape(cf.custom_label_0)}</custom_label_0>`);
     if (cf.custom_label_1) parts.push(`    <custom_label_1>${xmlEscape(cf.custom_label_1)}</custom_label_1>`);
-    if (cf.custom_label_2) parts.push(`    <custom_label_2>${xmlEscape(cf.custom_label_2)}</custom_label_2>`);
-    if (cf.custom_label_3) parts.push(`    <custom_label_3>${xmlEscape(cf.custom_label_3)}</custom_label_3>`);
-    if (cf.custom_label_4) parts.push(`    <custom_label_4>${xmlEscape(cf.custom_label_4)}</custom_label_4>`);
     if (cf.custom_number_0 != null) parts.push(`    <custom_number_0>${cf.custom_number_0}</custom_number_0>`);
     if (cf.custom_number_1 != null) parts.push(`    <custom_number_1>${cf.custom_number_1}</custom_number_1>`);
     if (cf.custom_number_2 != null) parts.push(`    <custom_number_2>${cf.custom_number_2}</custom_number_2>`);
     if (cf.custom_number_3 != null) parts.push(`    <custom_number_3>${cf.custom_number_3}</custom_number_3>`);
     if (cf.custom_number_4 != null) parts.push(`    <custom_number_4>${cf.custom_number_4}</custom_number_4>`);
+
+    // internal_label — sem revisão de política do Facebook
+    const internal = toInternalLabels(im);
+    for (const il of internal) parts.push(`    <internal_label>${xmlEscape(il)}</internal_label>`);
 
     parts.push('  </listing>');
   }

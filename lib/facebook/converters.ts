@@ -407,19 +407,42 @@ export interface CustomFields {
   custom_number_4: number | null;
 }
 
+/**
+ * Split inteligente de labels (ver de-para §5 atualizado):
+ * - custom_label_0 = tipo_imovel   (segmentação de campanha — forte, muda pouco)
+ * - custom_label_1 = bairro        (segmentação de campanha — forte, muda pouco)
+ * - custom_label_2..4 = null       (removidos pra evitar congelamento)
+ * - finalidade / padrao_imovel / codigo_auxiliar → internal_label (sem revisão)
+ */
 export function toCustomFields(i: ImovelFB): CustomFields {
   return {
-    custom_label_0: i.finalidade ?? null,
-    custom_label_1: i.tipo_imovel ?? null,
-    custom_label_2: i.padrao_imovel ?? null,
-    custom_label_3: i.bairro ?? null,
-    custom_label_4: i.codigo_auxiliar ?? i.codigo_cliente ?? null,
+    custom_label_0: i.tipo_imovel ?? null,
+    custom_label_1: i.bairro ?? null,
+    custom_label_2: null,
+    custom_label_3: null,
+    custom_label_4: null,
     custom_number_0: i.preco_medio_m2,
     custom_number_1: i.area_util,
     custom_number_2: i.quartos,
     custom_number_3: i.vagas,
     custom_number_4: i.suites,
   };
+}
+
+/**
+ * internal_label — labels internos SEM revisão de política do Facebook.
+ * Usado para organização/filtros no Commerce Manager sem congelar anúncios.
+ * Valores prefixados pra disambiguar a dimensão no momento do filtro.
+ */
+export function toInternalLabels(i: ImovelFB): string[] {
+  const out: string[] = [];
+  if (hasText(i.finalidade)) out.push(`finalidade:${i.finalidade}`);
+  if (hasText(i.padrao_imovel) && i.padrao_imovel !== 'Não informado') {
+    out.push(`padrao:${i.padrao_imovel}`);
+  }
+  const codAux = i.codigo_auxiliar ?? i.codigo_cliente;
+  if (hasText(codAux)) out.push(`cod_aux:${codAux}`);
+  return out;
 }
 
 // ── Nome fallback ────────────────────────────────────────────────────────────
