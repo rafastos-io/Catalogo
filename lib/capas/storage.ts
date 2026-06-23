@@ -66,11 +66,12 @@ async function getClient(): Promise<Client> {
   return _connecting;
 }
 
-/** Caminho absoluto do arquivo no servidor = remoteDir + relativePath. */
+/** Caminho absoluto do arquivo no servidor = remoteDir + relativePath. Sempre com barra inicial. */
 function remoteAbsPath(relativePath: string): string {
   const cfg = getConfigFromEnv();
   const safe = normalizeRemotePath(relativePath);
-  return posixJoin(cfg.remoteDir, safe);
+  const joined = posixJoin(cfg.remoteDir, safe);
+  return joined.startsWith('/') ? joined : `/${joined}`;
 }
 
 /** Caminho relativo dentro da pasta capas/ (pra construir URL publica). */

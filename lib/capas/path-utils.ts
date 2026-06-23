@@ -10,9 +10,15 @@ export function normalizeRemotePath(p: string): string {
   return s;
 }
 
+/**
+ * Join de partes POSIX. Preserva a barra inicial se o primeiro argumento
+ * comecar com / (pra formar caminho absoluto, exigido por SFTP).
+ */
 export function posixJoin(...parts: string[]): string {
+  const leadingSlash = parts.length > 0 && parts[0].startsWith('/');
   const filtered = parts.map((p) => p.replace(/^\/+|\/+$/g, '')).filter(Boolean);
-  return filtered.join('/');
+  const joined = filtered.join('/');
+  return leadingSlash ? `/${joined}` : joined;
 }
 
 export function dirname(p: string): string {
