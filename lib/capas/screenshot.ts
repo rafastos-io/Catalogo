@@ -58,6 +58,7 @@ export async function getBrowser(): Promise<Browser> {
   _browser = await puppeteer.launch({
     executablePath,
     headless: true,
+    protocolTimeout: 60_000,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -93,7 +94,7 @@ export async function screenshotHtml(html: string, opts: ScreenshotOptions): Pro
     });
     await page.setContent(html, {
       waitUntil: 'networkidle0', // espera fonts e imagens carregarem
-      timeout: 30_000,
+      timeout: 45_000,
     });
     // Dá um tempinho pra fonts Google carregarem após networkidle
     await page.evaluate(() => {
