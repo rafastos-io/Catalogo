@@ -1,4 +1,4 @@
-// Render HTML → PNG via Puppeteer local (Chrome instalado no Ubuntu runner).
+// Render HTML → JPG via Puppeteer local (Chrome instalado no Ubuntu runner).
 // Substitui lib/templates/screenshot.ts do MarketCenter (que usa Browserless.io).
 
 import puppeteer, { type Browser, type Page } from 'puppeteer-core';
@@ -80,7 +80,7 @@ export async function closeBrowser(): Promise<void> {
   }
 }
 
-/** Renderiza HTML → PNG Buffer. Reaproveita browser, abre nova page cada chamada. */
+/** Renderiza HTML → JPG Buffer (quality 85). Reaproveita browser, abre nova page cada chamada. */
 export async function screenshotHtml(html: string, opts: ScreenshotOptions): Promise<Buffer> {
   const browser = await getBrowser();
   const page: Page = await browser.newPage();
@@ -100,7 +100,8 @@ export async function screenshotHtml(html: string, opts: ScreenshotOptions): Pro
       return (document as any).fonts?.ready ?? Promise.resolve();
     });
     const buf = await page.screenshot({
-      type: 'png',
+      type: 'jpeg',
+      quality: 85,
       clip: { x: 0, y: 0, width: opts.width, height: opts.height },
       omitBackground: false,
     });

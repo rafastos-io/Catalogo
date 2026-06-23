@@ -360,14 +360,14 @@ export async function gerarFeedFacebook(opts: FeedOptions): Promise<FeedResult> 
   }
   console.info(`[fb-feed] ${imoveis.length} imoveis ativos carregados`);
 
-  // Lê mapa de capas geradas (codigo uppercase → capa_url no R2)
+  // Lê mapa de capas geradas (codigo uppercase → capa_url no storage SFTP)
   console.info('[fb-feed] Lendo capas_imoveis do Turso...');
   const capasRs = await client.execute('SELECT codigo, capa_url FROM capas_imoveis');
   const capasMap = new Map<string, string>();
   for (const row of capasRs.rows) {
     capasMap.set(String(row.codigo).toUpperCase(), String(row.capa_url));
   }
-  console.info(`[fb-feed] ${capasMap.size} capas disponíveis (R2)`);
+  console.info(`[fb-feed] ${capasMap.size} capas disponíveis (storage)`);
 
   let csvPath: string | null = null;
   let xmlPath: string | null = null;

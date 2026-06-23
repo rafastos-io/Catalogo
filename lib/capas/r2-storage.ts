@@ -5,6 +5,8 @@ import {
   S3Client,
   PutObjectCommand,
   HeadObjectCommand,
+  DeleteObjectsCommand,
+  ListObjectsV2Command,
   S3ServiceException,
 } from '@aws-sdk/client-s3';
 
@@ -90,6 +92,77 @@ export async function objectExists(key: string): Promise<boolean> {
 export function publicUrlFor(key: string): string {
   const cfg = getConfigFromEnv();
   return `${cfg.publicUrl}/${key}`;
+}
+
+/**
+ * Deleta um objeto do R2 (best-effort — não lança em 404).
+ * Útil pra remover a versão antiga da capa ao subir uma nova.
+ */
+export async function deleteObject(key: string): Promise<void> {
+  const cfg = getConfigFromEnv();
+  const client = getClient();
+  try {
+    await client.send(
+      new DeleteObjectsCommand({
+        Bucket: cfg.bucketName,
+        Delete: { Objects: [{ Key: key }] },
+      }),
+    );
+  } catch (err) {
+    if (err instanceof S3ServiceException && (err.$metadata?.httpStatusCode === 404 || err.name === 'NotFound')) {
+      return;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Lista TODAS as keys do bucket (pagina via ListObjectsV2).
+ * Retorna array de strings (keys). Pra buckets grandes pode consumir memória;
+ * use `listAndDeleteOrphans` em vez de chamar isso + deletar manualmente se
+ * o volume for muito alto.
+ */
+export async function listAllKeys(): Promise<string[]> {
+  const cfg = getConfigFromEnv();
+  const client = getClient();
+  const keys: string[] = [];
+  let continuationToken: string | undefined;
+  do {
+    const res = await client.send(
+      new ListObjectsV2Command({
+        Bucket: cfg.bucketName,
+        ContinuationToken: continuationToken,
+        MaxKeys: 1000,
+      }),
+    );
+    for (const obj of res.Contents ?? []) {
+      if (obj.Key) keys.push(obj.Key);
+    }
+    continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
+  } while (continuationToken);
+  return keys;
+}
+
+/**
+ * Deleta um lote de keys (até 1000 por chamada — limite da S3 API).
+ * Retorna o número de objetos efetivamente deletados.
+ */
+export async function deleteKeys(keys: string[]): Promise<number> {
+  if (keys.length === 0) return 0;
+  const cfg = getConfigFromEnv();
+  const client = getClient();
+  let deleted = 0;
+  for (let i = 0; i < keys.length; i += 1000) {
+    const batch = keys.slice(i, i + 1000);
+    const res = await client.send(
+      new DeleteObjectsCommand({
+        Bucket: cfg.bucketName,
+        Delete: { Objects: batch.map((Key) => ({ Key })) },
+      }),
+    );
+    deleted += res.Deleted?.length ?? 0;
+  }
+  return deleted;
 }
 
 /**

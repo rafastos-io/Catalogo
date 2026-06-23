@@ -1,8 +1,8 @@
 /**
  * scripts/gerar-capas-imoveis.ts
  *
- * Gera capas (PNG 1080x1080) para os imóveis do catálogo usando o template
- * imovel-estatico-03. Sobe os PNGs para Cloudflare R2 e registra em
+ * Gera capas (JPG 1080x1080 q85) para os imóveis do catálogo usando o template
+ * imovel-estatico-03. Sobe os JPGs via SFTP para a Hostinger e registra em
  * capas_imoveis (Turso) para controle incremental.
  *
  * Uso:
@@ -10,7 +10,8 @@
  *
  * Variáveis de ambiente:
  *   TURSO_DATABASE_URL, TURSO_AUTH_TOKEN
- *   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, R2_PUBLIC_URL
+ *   STORAGE_SFTP_HOST, STORAGE_SFTP_PORT, STORAGE_SFTP_USER, STORAGE_SFTP_PASS,
+ *   STORAGE_PUBLIC_URL, STORAGE_REMOTE_DIR
  *   PUPPETEER_EXECUTABLE_PATH (opcional — default: detecta Chrome do sistema)
  */
 

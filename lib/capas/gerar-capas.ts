@@ -1,5 +1,5 @@
-// Orquestrador: lê Turso, decide incremental, gera PNG, sobe pro R2,
-// atualiza capas_imoveis. Reaproveita browser e client R2 entre os imóveis.
+// Orquestrador: le Turso, decide incremental, gera JPG, sobe via SFTP,
+// atualiza capas_imoveis. Reaproveita browser e client SFTP entre os imoveis.
 
 import { createClient, type Client } from '@libsql/client';
 import { readFileSync } from 'fs';
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import { BRAND_KIT, logoToDataUri } from './brand-kit.js';
 import { renderTemplateHtml, type ImovelDados } from './token-renderer.js';
 import { screenshotBatch, closeBrowser, type ScreenshotOptions } from './screenshot.js';
-import { uploadPng, capaKey, publicUrlFor, objectExists, closeR2Client } from './r2-storage.js';
+import { uploadPng, capaKey, publicUrlFor, objectExists, deleteObject, closeStorageClient } from './storage.js';
 
 export interface GerarCapasOptions {
   limit?: number; // se setado, processa só N imóveis (dry-run)
@@ -117,21 +117,21 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
   if (toProcess.length === 0) {
     console.info('[capas] Nada a processar — todas as capas estão atualizadas');
     closeBrowser();
-    closeR2Client();
+    closeStorageClient();
     turso.close();
     return { total: imoveis.length, gerados: 0, skippados: imoveis.length, erros: 0, durationMs: Date.now() - start };
   }
 
-  // Pré-filtra quem já tem PNG no R2 (evita re-render quando capa existe mas
-  // capas_imoveis está desatualizada — edge case de migrations).
+  // Pre-filtra quem ja tem JPG no storage (evita re-render quando capa existe mas
+  // capas_imoveis esta desatualizada — edge case de migrations).
   // Skip inteiro se capasMap vazio (fresh load: todos precisam render mesmo).
   // Skip se force (vai regerar tudo independente).
   let renderList: ImovelRow[] = toProcess;
   if (!force && capasMap.size > 0 && toProcess.length > 0) {
-    console.info('[capas] Checando existência no R2 (HEAD paralelo) pra skips adicionais...');
-    const skipR2: ImovelRow[] = [];
+    console.info('[capas] Checando existencia no storage (HEAD paralelo) pra skips adicionais...');
+    const skipExistentes: ImovelRow[] = [];
     const needRender: ImovelRow[] = [];
-    // HEAD checks paralelos (concurrency = 20) pra não bloquear
+    // HEAD checks paralelos (concurrency = 20) pra nao bloquear
     const HEAD_CONCURRENCY = 20;
     let headCursor = 0;
     async function headWorker() {
@@ -141,7 +141,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
         const im = toProcess[i];
         try {
           const exists = await objectExists(capaKey(im.codigo, im.ultima_atualizacao));
-          if (exists) skipR2.push(im);
+          if (exists) skipExistentes.push(im);
           else needRender.push(im);
         } catch {
           needRender.push(im); // em caso de erro no HEAD, renderiza
@@ -149,10 +149,10 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
       }
     }
     await Promise.all(Array.from({ length: Math.min(HEAD_CONCURRENCY, toProcess.length) }, () => headWorker()));
-    console.info(`[capas]   ${skipR2.length} já no R2 (skip) · ${needRender.length} precisam render`);
+    console.info(`[capas]   ${skipExistentes.length} ja no storage (skip) · ${needRender.length} precisam render`);
     renderList = needRender;
-    // Pra quem já tá no R2 mas não está em capas_imoveis, atualiza o banco
-    for (const im of skipR2) {
+    // Pra quem ja ta no storage mas nao esta em capas_imoveis, atualiza o banco
+    for (const im of skipExistentes) {
       const capaUrl = publicUrlFor(capaKey(im.codigo, im.ultima_atualizacao));
       await turso.execute({
         sql: `INSERT INTO capas_imoveis (codigo, capa_url, ultima_atualizacao_gerada, gerado_em) VALUES (?, ?, ?, ?) ON CONFLICT(codigo) DO UPDATE SET capa_url=excluded.capa_url, ultima_atualizacao_gerada=excluded.ultima_atualizacao_gerada, gerado_em=excluded.gerado_em`,
@@ -178,22 +178,34 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
     opts: dims,
   }));
 
-  const results = await screenshotBatch(items, concurrency, async (item, _idx, png, error) => {
+  const results = await screenshotBatch(items, concurrency, async (item, _idx, img, error) => {
     const im = (item as { imovel: ImovelRow }).imovel;
-    if (error || !png) {
+    if (error || !img) {
       erros++;
-      console.error(`[capas] ❌ ${im.codigo}: ${error?.message ?? 'PNG nulo'}`);
+      console.error(`[capas] ❌ ${im.codigo}: ${error?.message ?? 'JPG nulo'}`);
       return;
     }
     try {
       const key = capaKey(im.codigo, im.ultima_atualizacao);
-      const capaUrl = await uploadPng(key, png);
+      const capaUrl = await uploadPng(key, img);
       // Atualiza capas_imoveis
       await turso.execute({
         sql: `INSERT INTO capas_imoveis (codigo, capa_url, ultima_atualizacao_gerada, gerado_em) VALUES (?, ?, ?, ?) ON CONFLICT(codigo) DO UPDATE SET capa_url=excluded.capa_url, ultima_atualizacao_gerada=excluded.ultima_atualizacao_gerada, gerado_em=excluded.gerado_em`,
         args: [im.codigo.toUpperCase(), capaUrl, im.ultima_atualizacao ?? null, new Date().toISOString()],
       });
       gerados++;
+      // Deleta a versao antiga da capa (se houver) pra nao acumular orfaos no storage
+      const oldVersion = capasMap.get(im.codigo.toUpperCase());
+      if (oldVersion) {
+        const oldKey = capaKey(im.codigo, oldVersion);
+        if (oldKey !== key) {
+          try {
+            await deleteObject(oldKey);
+          } catch {
+            // best-effort: nao falha o processo se o delete da versao antiga errar
+          }
+        }
+      }
     } catch (err) {
       erros++;
       console.error(`[capas] ❌ ${im.codigo} upload/db: ${err instanceof Error ? err.message : err}`);
@@ -205,7 +217,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
 
   // Cleanup
   closeBrowser();
-  closeR2Client();
+  closeStorageClient();
   turso.close();
 
   const durationMs = Date.now() - start;

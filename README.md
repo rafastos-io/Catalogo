@@ -37,6 +37,8 @@ novos ou alterados.
 | `lib/sync/xml-imoveis.ts` | Núcleo: fetch XML, parse, diff incremental, upsert |
 | `lib/facebook/converters.ts` | Conversores puros (Turso → Facebook enums/formatos) |
 | `lib/facebook/gerar-feed.ts` | Gera CSV + XML no formato Home Listings |
+| `lib/capas/storage.ts` | Upload de JPGs via SFTP pra Hostinger (URL pública + controle incremental) |
+| `lib/capas/r2-storage.ts` | **Legado** — só usado pelos scripts de limpeza do R2 (`r2:limpar-*`) |
 | `schema.sql` | Schema da tabela `imoveis` (referência) |
 
 ## Variáveis de ambiente (GitHub Secrets)
@@ -46,6 +48,12 @@ novos ou alterados.
 | `TURSO_DATABASE_URL` | URL `libsql://` do banco Turso |
 | `TURSO_AUTH_TOKEN` | Token de acesso (full-access) |
 | `IMOVEIS_XML_URL` | URL do feed XML externo de imóveis |
+| `STORAGE_SFTP_HOST` | Host do SFTP Hostinger (ex: `srvXXX.main-hosting.eu`) |
+| `STORAGE_SFTP_PORT` | Porta SFTP (sempre `6502` na Hostinger) |
+| `STORAGE_SFTP_USER` | Usuário da conta FTP dedicada (ex: `u123456789.capas`) |
+| `STORAGE_SFTP_PASS` | Senha da conta FTP dedicada |
+| `STORAGE_PUBLIC_URL` | URL pública do domínio (ex: `https://seudominio.com.br`) |
+| `STORAGE_REMOTE_DIR` | Caminho absoluto da pasta `capas/` no servidor |
 
 ## Scripts npm
 
@@ -53,6 +61,10 @@ novos ou alterados.
 |---|---|
 | `npm run sync:imoveis` | Sincroniza XML → Turso (incremental) |
 | `npm run feed:facebook` | Gera feed Facebook (CSV + XML) em `out/` |
+| `npm run capas:imoveis` | Gera capas (JPG 1080x1080 q85) e sobe via SFTP pra Hostinger |
+| `npm run r2:limpar-orfaos` | **Legado** — limpa capas órfãs do R2 |
+| `npm run r2:limpar-capas` | **Legado** — remove todas as capas do R2 |
+| `npm run storage:limpar-orfaos` | Limpa capas órfãs do Cloudinary |
 | `npm run typecheck` | Verifica tipos TypeScript |
 
 ## Rodar localmente
