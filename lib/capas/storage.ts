@@ -6,6 +6,7 @@
 //
 // Estrategia:
 // - Upload/delete/list: SFTP (Hostinger porta 65002 — varia por conta)
+// - Pool de conexoes SFTP (default 5) pra paralelizar uploads
 // - Exists check: HTTP HEAD na URL publica (mais rapido e nao consome SFTP)
 // - Garantia de pasta: mkdir -p recursivo no primeiro upload
 
@@ -20,10 +21,15 @@ export interface StorageConfig {
   sftpPass: string;
   publicUrl: string;
   remoteDir: string; // caminho absoluto da pasta capas/ no servidor
+  poolSize: number; // numero de conexoes SFTP concorrentes
 }
 
-let _client: Client | null = null;
-let _connecting: Promise<Client> | null = null;
+const DEFAULT_POOL_SIZE = 5;
+
+let _pool: Client[] = [];
+let _poolReady: Promise<Client>[] = [];
+let _poolInitStarted = false;
+let _rrIndex = 0; // round-robin index
 
 function getConfigFromEnv(): StorageConfig {
   const sftpHost = process.env.STORAGE_SFTP_HOST;
@@ -34,36 +40,63 @@ function getConfigFromEnv(): StorageConfig {
   const remoteDir = process.env.STORAGE_REMOTE_DIR;
   if (!sftpHost || !sftpUser || !sftpPass || !publicUrl || !remoteDir) {
     throw new Error(
-      'STORAGE env vars faltando. Configure STORAGE_SFTP_HOST, STORAGE_SFTP_PORT (6502), STORAGE_SFTP_USER, STORAGE_SFTP_PASS, STORAGE_PUBLIC_URL, STORAGE_REMOTE_DIR.',
+      'STORAGE env vars faltando. Configure STORAGE_SFTP_HOST, STORAGE_SFTP_PORT, STORAGE_SFTP_USER, STORAGE_SFTP_PASS, STORAGE_PUBLIC_URL, STORAGE_REMOTE_DIR.',
     );
   }
   const sftpPort = sftpPortRaw ? parseInt(sftpPortRaw, 10) : 6502;
   if (isNaN(sftpPort)) throw new Error('STORAGE_SFTP_PORT invalido');
-  return { sftpHost, sftpPort, sftpUser, sftpPass, publicUrl, remoteDir };
+  const poolSizeRaw = process.env.STORAGE_POOL_SIZE;
+  const poolSize = poolSizeRaw ? Math.max(1, parseInt(poolSizeRaw, 10)) : DEFAULT_POOL_SIZE;
+  return { sftpHost, sftpPort, sftpUser, sftpPass, publicUrl, remoteDir, poolSize };
 }
 
-async function getClient(): Promise<Client> {
-  if (_client) return _client;
-  if (_connecting) return _connecting;
+function buildClient(cfg: StorageConfig): Client {
+  const c = new Client();
+  return c;
+}
+
+async function connectClient(c: Client, cfg: StorageConfig): Promise<Client> {
+  await c.connect({
+    host: cfg.sftpHost,
+    port: cfg.sftpPort,
+    username: cfg.sftpUser,
+    password: cfg.sftpPass,
+    readyTimeout: 30_000,
+    algorithms: {
+      serverHostKey: ['ssh-rsa', 'ssh-ed25519', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'],
+    },
+  });
+  return c;
+}
+
+/** Inicializa o pool de conexoes SFTP (lazy, na primeira chamada). */
+async function ensurePool(): Promise<void> {
+  if (_poolInitStarted) return;
+  _poolInitStarted = true;
   const cfg = getConfigFromEnv();
-  _connecting = (async () => {
-    const c = new Client();
-    await c.connect({
-      host: cfg.sftpHost,
-      port: cfg.sftpPort,
-      username: cfg.sftpUser,
-      password: cfg.sftpPass,
-      readyTimeout: 30_000,
-      // Hostinger usa chaveECDSA — algumas versoes de ssh2 precisam disso:
-      algorithms: {
-        serverHostKey: ['ssh-rsa', 'ssh-ed25519', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'],
-      },
+  const size = Math.max(1, cfg.poolSize);
+  _poolReady = Array.from({ length: size }, (_, i): Promise<Client> => {
+    const c = buildClient(cfg);
+    return connectClient(c, cfg).then((connected) => {
+      _pool[i] = connected;
+      return connected;
     });
-    _client = c;
-    _connecting = null;
-    return c;
-  })();
-  return _connecting;
+  });
+  await Promise.all(_poolReady);
+}
+
+/** Pega a proxima conexao do pool (round-robin). */
+async function getClient(): Promise<Client> {
+  await ensurePool();
+  if (_pool.length === 0) {
+    // fallback: se o pool todo falhou, cria uma nova conexao ad-hoc
+    const cfg = getConfigFromEnv();
+    const c = buildClient(cfg);
+    return connectClient(c, cfg);
+  }
+  const c = _pool[_rrIndex % _pool.length];
+  _rrIndex = (_rrIndex + 1) % _pool.length;
+  return c;
 }
 
 /** Caminho absoluto do arquivo no servidor = remoteDir + relativePath. Sempre com barra inicial. */
@@ -198,11 +231,13 @@ export function capaKey(codigo: string, ultimaAtualizacao?: string | null): stri
 /** Alias pra compat com gerar-capas (capaPublicId era sem extensao no Cloudinary). */
 export const capaPublicId = capaKey;
 
-/** Fecha o client SFTP (chamar no fim do processo). */
+/** Fecha todas as conexoes do pool SFTP (chamar no fim do processo). */
 export function closeStorageClient(): void {
-  if (_client) {
-    _client.end().catch(() => {});
-    _client = null;
+  for (const c of _pool) {
+    c.end().catch(() => {});
   }
-  _connecting = null;
+  _pool = [];
+  _poolReady = [];
+  _poolInitStarted = false;
+  _rrIndex = 0;
 }

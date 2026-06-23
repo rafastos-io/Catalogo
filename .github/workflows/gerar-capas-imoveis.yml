@@ -63,6 +63,7 @@ jobs:
           STORAGE_SFTP_PASS: ${{ secrets.STORAGE_SFTP_PASS }}
           STORAGE_PUBLIC_URL: ${{ secrets.STORAGE_PUBLIC_URL }}
           STORAGE_REMOTE_DIR: ${{ secrets.STORAGE_REMOTE_DIR }}
+          STORAGE_POOL_SIZE: '5'
         run: |
           ARGS="--concurrency=${{ github.event.inputs.concurrency || '10' }}"
           if [ "${{ github.event.inputs.limit || '0' }}" != "0" ]; then
