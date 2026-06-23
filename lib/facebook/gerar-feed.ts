@@ -30,6 +30,7 @@ import {
   toAgentCompany,
   toMinMaxPrice,
   formatMoneyBRL,
+  normalizeUrl,
   type ImovelFB,
 } from './converters.js';
 
@@ -61,7 +62,7 @@ const CSV_COLUMNS: Array<{ key: string; get: (i: ImovelFB) => string | null }> =
   { key: 'availability', get: (i) => toAvailability(i) },
   { key: 'price', get: (i) => toPrice(i) },
   // image[0..N] geradas dinamicamente no loop (capa + fotos originais)
-  { key: 'url', get: (i) => i.url_portal },
+  { key: 'url', get: (i) => normalizeUrl(i.url_portal) },
   { key: 'address.addr1', get: (i) => toAddress(i).addr1 },
   { key: 'address.addr2', get: (i) => toAddress(i).addr2 },
   { key: 'address.city', get: (i) => toAddress(i).city },
@@ -226,7 +227,8 @@ function gerarXml(
     if (price) parts.push(`    <price>${xmlEscape(price)}</price>`);
     if (minmax.min) parts.push(`    <min_price>${xmlEscape(minmax.min)}</min_price>`);
     if (minmax.max) parts.push(`    <max_price>${xmlEscape(minmax.max)}</max_price>`);
-    if (im.url_portal) parts.push(`    <url>${xmlEscape(im.url_portal)}</url>`);
+    const urlNorm = normalizeUrl(im.url_portal);
+    if (urlNorm) parts.push(`    <url>${xmlEscape(urlNorm)}</url>`);
 
     // Endereço
     parts.push('    <address format="simple">');

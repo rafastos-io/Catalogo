@@ -6,6 +6,21 @@ import type { Row } from '@libsql/client';
 
 // ── Tipo da linha (subset da tabela imoveis que usamos no feed) ──────────────
 
+/**
+ * Normaliza a URL do portal para HTTPS e remove fragmentos/query strings
+ * propagados pela fonte XML quando aplicável. Facebook exige HTTPS no campo
+ * `url` do Home Listings (template_url_spec) — URLs http:// geram erro #100.
+ */
+export function normalizeUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('https://')) return trimmed;
+  if (trimmed.startsWith('http://')) return 'https://' + trimmed.slice('http://'.length);
+  if (trimmed.startsWith('//')) return 'https:' + trimmed;
+  return trimmed;
+}
+
 export interface ImovelFB {
   codigo: string;
   titulo: string | null;
