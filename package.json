@@ -14,6 +14,7 @@
     "r2:limpar-orfaos": "tsx scripts/limpar-r2-orfaos.ts",
     "r2:limpar-capas": "tsx scripts/limpar-r2-capas.ts",
     "storage:limpar-orfaos": "tsx scripts/limpar-storage-orfaos.ts",
+    "popular-content-hash": "tsx scripts/popular-content-hash.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

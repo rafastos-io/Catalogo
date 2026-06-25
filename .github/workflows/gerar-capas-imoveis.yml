@@ -52,6 +52,12 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
+      - name: Popular content_hash (garante incremental correto)
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: npm run popular-content-hash
+
       - name: Gerar capas
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
