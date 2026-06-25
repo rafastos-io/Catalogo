@@ -360,12 +360,23 @@ export async function gerarFeedFacebook(opts: FeedOptions): Promise<FeedResult> 
   }
   console.info(`[fb-feed] ${imoveis.length} imoveis ativos carregados`);
 
-  // Lê mapa de capas geradas (codigo uppercase → capa_url no storage SFTP)
-  console.info('[fb-feed] Lendo capas_imoveis do Turso...');
-  const capasRs = await client.execute('SELECT codigo, capa_url FROM capas_imoveis');
+  // Lê mapa de capas geradas (codigo uppercase → capa_url no storage SFTP).
+  // Paginado (igual leitura de imoveis) — @libsql/client pode truncar queries
+  // grandes sem paginacao, causando capas faltando no feed.
+  console.info('[fb-feed] Lendo capas_imoveis do Turso (cursor pagination)...');
   const capasMap = new Map<string, string>();
-  for (const row of capasRs.rows) {
-    capasMap.set(String(row.codigo).toUpperCase(), String(row.capa_url));
+  let capasCursor = '';
+  while (true) {
+    const capasRs = await client.execute({
+      sql: 'SELECT codigo, capa_url FROM capas_imoveis WHERE codigo > ? ORDER BY codigo LIMIT 1000',
+      args: [capasCursor],
+    });
+    if (capasRs.rows.length === 0) break;
+    for (const row of capasRs.rows) {
+      capasMap.set(String(row.codigo).toUpperCase(), String(row.capa_url));
+    }
+    capasCursor = String(capasRs.rows[capasRs.rows.length - 1].codigo);
+    if (capasRs.rows.length < 1000) break;
   }
   console.info(`[fb-feed] ${capasMap.size} capas disponíveis (storage)`);
 
