@@ -9,6 +9,7 @@ import { BRAND_KIT, logoToDataUri } from './brand-kit.js';
 import { renderTemplateHtml, type ImovelDados } from './token-renderer.js';
 import { screenshotBatch, closeBrowser, type ScreenshotOptions } from './screenshot.js';
 import { uploadPng, capaKey, publicUrlFor, objectExists, deleteObject, closeStorageClient } from './storage.js';
+import { computeContentHash } from './content-hash.js';
 
 export interface GerarCapasOptions {
   limit?: number; // se setado, processa só N imóveis (dry-run)
@@ -85,25 +86,41 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
   }
   console.info(`[capas] ${imoveis.length} imóveis ativos carregados`);
 
-  // Lê capas já geradas (controle incremental)
-  const capasRs = await turso.execute('SELECT codigo, ultima_atualizacao_gerada FROM capas_imoveis');
-  const capasMap = new Map<string, string | null>();
-  for (const row of capasRs.rows) {
-    capasMap.set(String(row.codigo).toUpperCase(), (row.ultima_atualizacao_gerada as string | null) ?? null);
+  // Lê capas já geradas (controle incremental por content_hash).
+  // Paginado pra evitar truncamento do @libsql/client em queries grandes.
+  console.info('[capas] Lendo capas_imoveis do Turso (cursor pagination)...');
+  const capasMap = new Map<string, { ultimaAtualizacaoGerada: string | null; contentHash: string | null }>();
+  let capasCursor = '';
+  while (true) {
+    const capasRs = await turso.execute({
+      sql: 'SELECT codigo, ultima_atualizacao_gerada, content_hash FROM capas_imoveis WHERE codigo > ? ORDER BY codigo LIMIT 1000',
+      args: [capasCursor],
+    });
+    if (capasRs.rows.length === 0) break;
+    for (const row of capasRs.rows) {
+      capasMap.set(String(row.codigo).toUpperCase(), {
+        ultimaAtualizacaoGerada: (row.ultima_atualizacao_gerada as string | null) ?? null,
+        contentHash: (row.content_hash as string | null) ?? null,
+      });
+    }
+    capasCursor = String(capasRs.rows[capasRs.rows.length - 1].codigo);
+    if (capasRs.rows.length < 1000) break;
   }
   console.info(`[capas] ${capasMap.size} capas já geradas anteriormente`);
 
-  // Filtra quem precisa de capa (incremental)
+  // Filtra quem precisa de capa (incremental por content_hash).
+  // Compara o hash dos campos atuais do imovel com o hash gravado na ultima
+  // geracao. Se for igual, a capa visualmente nao mudou → skipa. Se diferir
+  // (ou se nunca gerou), processa.
   let toProcess: ImovelRow[] = imoveis;
   if (!force) {
     toProcess = imoveis.filter((im) => {
-      const lastGen = capasMap.get(im.codigo.toUpperCase());
-      if (lastGen == null) return true; // nunca gerou
-      const imDate = im.ultima_atualizacao ?? '';
-      if (!imDate) return false; // sem data no imóvel → confia na capa existente
-      return imDate > lastGen; // imóvel atualizado depois da capa
+      const existing = capasMap.get(im.codigo.toUpperCase());
+      if (existing == null) return true; // nunca gerou
+      const currentHash = computeContentHash(im);
+      return existing.contentHash !== currentHash; // hash mudou → regera
     });
-    console.info(`[capas] Incremental: ${toProcess.length} de ${imoveis.length} a processar`);
+    console.info(`[capas] Incremental: ${toProcess.length} de ${imoveis.length} a processar (por content_hash)`);
   } else {
     console.info(`[capas] Force: regerando todas as ${imoveis.length} capas`);
   }
@@ -154,9 +171,10 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
     // Pra quem ja ta no storage mas nao esta em capas_imoveis, atualiza o banco
     for (const im of skipExistentes) {
       const capaUrl = publicUrlFor(capaKey(im.codigo, im.ultima_atualizacao));
+      const currentHash = computeContentHash(im);
       await turso.execute({
-        sql: `INSERT INTO capas_imoveis (codigo, capa_url, ultima_atualizacao_gerada, gerado_em) VALUES (?, ?, ?, ?) ON CONFLICT(codigo) DO UPDATE SET capa_url=excluded.capa_url, ultima_atualizacao_gerada=excluded.ultima_atualizacao_gerada, gerado_em=excluded.gerado_em`,
-        args: [im.codigo.toUpperCase(), capaUrl, im.ultima_atualizacao ?? null, new Date().toISOString()],
+        sql: `INSERT INTO capas_imoveis (codigo, capa_url, ultima_atualizacao_gerada, content_hash, gerado_em) VALUES (?, ?, ?, ?, ?) ON CONFLICT(codigo) DO UPDATE SET capa_url=excluded.capa_url, ultima_atualizacao_gerada=excluded.ultima_atualizacao_gerada, content_hash=excluded.content_hash, gerado_em=excluded.gerado_em`,
+        args: [im.codigo.toUpperCase(), capaUrl, im.ultima_atualizacao ?? null, currentHash, new Date().toISOString()],
       });
     }
   }
@@ -188,16 +206,17 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
     try {
       const key = capaKey(im.codigo, im.ultima_atualizacao);
       const capaUrl = await uploadPng(key, img);
-      // Atualiza capas_imoveis
+      const currentHash = computeContentHash(im);
+      // Atualiza capas_imoveis com a URL nova + content_hash atual
       await turso.execute({
-        sql: `INSERT INTO capas_imoveis (codigo, capa_url, ultima_atualizacao_gerada, gerado_em) VALUES (?, ?, ?, ?) ON CONFLICT(codigo) DO UPDATE SET capa_url=excluded.capa_url, ultima_atualizacao_gerada=excluded.ultima_atualizacao_gerada, gerado_em=excluded.gerado_em`,
-        args: [im.codigo.toUpperCase(), capaUrl, im.ultima_atualizacao ?? null, new Date().toISOString()],
+        sql: `INSERT INTO capas_imoveis (codigo, capa_url, ultima_atualizacao_gerada, content_hash, gerado_em) VALUES (?, ?, ?, ?, ?) ON CONFLICT(codigo) DO UPDATE SET capa_url=excluded.capa_url, ultima_atualizacao_gerada=excluded.ultima_atualizacao_gerada, content_hash=excluded.content_hash, gerado_em=excluded.gerado_em`,
+        args: [im.codigo.toUpperCase(), capaUrl, im.ultima_atualizacao ?? null, currentHash, new Date().toISOString()],
       });
       gerados++;
       // Deleta a versao antiga da capa (se houver) pra nao acumular orfaos no storage
-      const oldVersion = capasMap.get(im.codigo.toUpperCase());
-      if (oldVersion) {
-        const oldKey = capaKey(im.codigo, oldVersion);
+      const existing = capasMap.get(im.codigo.toUpperCase());
+      if (existing) {
+        const oldKey = capaKey(im.codigo, existing.ultimaAtualizacaoGerada);
         if (oldKey !== key) {
           try {
             await deleteObject(oldKey);
