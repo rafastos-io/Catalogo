@@ -133,9 +133,9 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
 
   if (toProcess.length === 0) {
     console.info('[capas] Nada a processar — todas as capas estão atualizadas');
-    closeBrowser();
-    closeStorageClient();
-    turso.close();
+    try { await closeBrowser(); } catch {}
+    try { closeStorageClient(); } catch {}
+    try { turso.close(); } catch {}
     return { total: imoveis.length, gerados: 0, skippados: imoveis.length, erros: 0, durationMs: Date.now() - start };
   }
 
@@ -185,9 +185,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
     height: formato === '1080x1920' ? 1920 : formato === '1080x1350' ? 1350 : 1080,
   };
 
-  // Render em batch
-  let gerados = 0;
-  let erros = 0;
+  // Render em batch (passo 1) + retry pass (passo 2) pra garantir resiliência.
   console.info(`[capas] Renderizando ${renderList.length} capas (concurrency=${concurrency})...`);
 
   const items = renderList.map((im) => ({
@@ -196,48 +194,82 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
     opts: dims,
   }));
 
-  const results = await screenshotBatch(items, concurrency, async (item, _idx, img, error) => {
-    const im = (item as { imovel: ImovelRow }).imovel;
-    if (error || !img) {
-      erros++;
-      console.error(`[capas] ❌ ${im.codigo}: ${error?.message ?? 'JPG nulo'}`);
-      return;
-    }
-    try {
-      const key = capaKey(im.codigo, im.ultima_atualizacao);
-      const capaUrl = await uploadPng(key, img);
-      const currentHash = computeContentHash(im);
-      // Atualiza capas_imoveis com a URL nova + content_hash atual
-      await turso.execute({
-        sql: `INSERT INTO capas_imoveis (codigo, capa_url, ultima_atualizacao_gerada, content_hash, gerado_em) VALUES (?, ?, ?, ?, ?) ON CONFLICT(codigo) DO UPDATE SET capa_url=excluded.capa_url, ultima_atualizacao_gerada=excluded.ultima_atualizacao_gerada, content_hash=excluded.content_hash, gerado_em=excluded.gerado_em`,
-        args: [im.codigo.toUpperCase(), capaUrl, im.ultima_atualizacao ?? null, currentHash, new Date().toISOString()],
-      });
-      gerados++;
-      // Deleta a versao antiga da capa (se houver) pra nao acumular orfaos no storage
-      const existing = capasMap.get(im.codigo.toUpperCase());
-      if (existing) {
-        const oldKey = capaKey(im.codigo, existing.ultimaAtualizacaoGerada);
-        if (oldKey !== key) {
-          try {
-            await deleteObject(oldKey);
-          } catch {
-            // best-effort: nao falha o processo se o delete da versao antiga errar
-          }
+  const status = new Map<number, 'ok' | 'error'>();
+
+  // Upload + registro no banco + cleanup da versão antiga. Lança em caso de erro.
+  const processUpload = async (im: ImovelRow, img: Buffer): Promise<void> => {
+    const key = capaKey(im.codigo, im.ultima_atualizacao);
+    const capaUrl = await uploadPng(key, img);
+    const currentHash = computeContentHash(im);
+    await turso.execute({
+      sql: `INSERT INTO capas_imoveis (codigo, capa_url, ultima_atualizacao_gerada, content_hash, gerado_em) VALUES (?, ?, ?, ?, ?) ON CONFLICT(codigo) DO UPDATE SET capa_url=excluded.capa_url, ultima_atualizacao_gerada=excluded.ultima_atualizacao_gerada, content_hash=excluded.content_hash, gerado_em=excluded.gerado_em`,
+      args: [im.codigo.toUpperCase(), capaUrl, im.ultima_atualizacao ?? null, currentHash, new Date().toISOString()],
+    });
+    // Deleta a versao antiga da capa (se houver) pra nao acumular orfaos no storage
+    const existing = capasMap.get(im.codigo.toUpperCase());
+    if (existing) {
+      const oldKey = capaKey(im.codigo, existing.ultimaAtualizacaoGerada);
+      if (oldKey !== key) {
+        try {
+          await deleteObject(oldKey);
+        } catch {
+          // best-effort: nao falha o processo se o delete da versao antiga errar
         }
       }
-    } catch (err) {
-      erros++;
-      console.error(`[capas] ❌ ${im.codigo} upload/db: ${err instanceof Error ? err.message : err}`);
     }
+  };
+
+  // Processa um item (render já feito pelo screenshotBatch). Retorna void,
+  // marca 'ok' ou 'error' no status map. Nunca lança — erros viram log + status.
+  const handleResult = async (
+    im: ImovelRow,
+    img: Buffer | null,
+    error: Error | null,
+    label: string,
+  ): Promise<boolean> => {
+    if (error || !img) {
+      console.error(`[capas] ❌ ${label} ${im.codigo}: ${error?.message ?? 'JPG nulo'}`);
+      return false;
+    }
+    try {
+      await processUpload(im, img);
+      return true;
+    } catch (err) {
+      console.error(`[capas] ❌ ${label} ${im.codigo} upload/db: ${err instanceof Error ? err.message : err}`);
+      return false;
+    }
+  };
+
+  // Passo 1: render + upload em paralelo (concurrency alta).
+  await screenshotBatch(items, concurrency, async (item, idx, img, error) => {
+    const im = (item as { imovel: ImovelRow }).imovel;
+    const ok = await handleResult(im, img, error, 'render');
+    status.set(idx, ok ? 'ok' : 'error');
   });
+
+  // Passo 2: retry dos que falharam, com concurrency baixa (mais resiliente).
+  const erroredIdxs = [...status.entries()].filter(([, s]) => s === 'error').map(([i]) => i);
+  if (erroredIdxs.length > 0) {
+    console.info(`[capas] Retry: ${erroredIdxs.length} capas com erro, retentando (concurrency=2)...`);
+    const retryItems = erroredIdxs.map((origIdx) => ({ ...items[origIdx], _origIdx: origIdx }));
+    await screenshotBatch(retryItems, 2, async (item, _retryIdx, img, error) => {
+      const origIdx = (item as { _origIdx: number })._origIdx;
+      const im = (item as { imovel: ImovelRow }).imovel;
+      const ok = await handleResult(im, img, error, 'retry');
+      status.set(origIdx, ok ? 'ok' : 'error');
+    });
+  }
+
+  const gerados = [...status.values()].filter((s) => s === 'ok').length;
+  const erros = [...status.values()].filter((s) => s === 'error').length;
 
   // Conta skips (capas que já existiam)
   const skippados = toProcess.length - gerados - erros;
 
-  // Cleanup
-  closeBrowser();
-  closeStorageClient();
-  turso.close();
+  // Cleanup (defensivo — nunca deixa exception escapar e derrubar o processo)
+  try { await closeBrowser(); } catch {}
+  try { closeStorageClient(); } catch {}
+  try { turso.close(); } catch {}
 
   const durationMs = Date.now() - start;
   const min = Math.floor(durationMs / 60_000);

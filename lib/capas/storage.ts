@@ -26,8 +26,8 @@ export interface StorageConfig {
 
 const DEFAULT_POOL_SIZE = 5;
 
-let _pool: Client[] = [];
-let _poolReady: Promise<Client>[] = [];
+let _pool: Array<Client | null> = [];
+let _poolReady: Array<Promise<Client | null>> = [];
 let _poolInitStarted = false;
 let _rrIndex = 0; // round-robin index
 
@@ -69,34 +69,104 @@ async function connectClient(c: Client, cfg: StorageConfig): Promise<Client> {
   return c;
 }
 
-/** Inicializa o pool de conexoes SFTP (lazy, na primeira chamada). */
+/** Inicializa (ou tenta) um slot do pool. Retorna Client ou null se falhar. */
+async function initSlot(i: number, cfg: StorageConfig): Promise<Client | null> {
+  try {
+    const c = buildClient(cfg);
+    await connectClient(c, cfg);
+    _pool[i] = c;
+    return c;
+  } catch {
+    _pool[i] = null;
+    return null;
+  }
+}
+
+/**
+ * Inicializa o pool de conexoes SFTP (lazy, na primeira chamada).
+ * Slots que falham ficam null e sao (re)conectados sob demanda pelo getClient.
+ * Nunca lanca — uma conexao ruim nao derruba as outras (Promise.allSettled).
+ */
 async function ensurePool(): Promise<void> {
   if (_poolInitStarted) return;
   _poolInitStarted = true;
   const cfg = getConfigFromEnv();
   const size = Math.max(1, cfg.poolSize);
-  _poolReady = Array.from({ length: size }, (_, i): Promise<Client> => {
-    const c = buildClient(cfg);
-    return connectClient(c, cfg).then((connected) => {
-      _pool[i] = connected;
-      return connected;
-    });
-  });
-  await Promise.all(_poolReady);
+  _pool = new Array<Client | null>(size).fill(null);
+  _poolReady = new Array<Promise<Client | null>>(size);
+  for (let i = 0; i < size; i++) {
+    _poolReady[i] = initSlot(i, cfg);
+  }
+  await Promise.allSettled(_poolReady);
 }
 
-/** Pega a proxima conexao do pool (round-robin). */
+/**
+ * Pega uma conexao usavel do pool (round-robin). Reconecta slots mortos
+ * de forma lazy. Se todo o pool falhar, cria conexao ad-hoc. Nunca retorna
+ * undefined — retorna Client conectado ou lanca.
+ */
 async function getClient(): Promise<Client> {
   await ensurePool();
-  if (_pool.length === 0) {
-    // fallback: se o pool todo falhou, cria uma nova conexao ad-hoc
-    const cfg = getConfigFromEnv();
-    const c = buildClient(cfg);
-    return connectClient(c, cfg);
+  const size = _pool.length;
+  const cfg = getConfigFromEnv();
+  if (size === 0) {
+    return connectClient(buildClient(cfg), cfg);
   }
-  const c = _pool[_rrIndex % _pool.length];
-  _rrIndex = (_rrIndex + 1) % _pool.length;
-  return c;
+  for (let attempt = 0; attempt < size; attempt++) {
+    const i = _rrIndex;
+    _rrIndex = (_rrIndex + 1) % size;
+    const c = _pool[i];
+    if (c) return c;
+    const reconnected = await initSlot(i, cfg);
+    if (reconnected) return reconnected;
+  }
+  return connectClient(buildClient(cfg), cfg);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** True se o erro indicar problema de conexao/transiente. */
+function isTransientError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE|EHOSTUNREACH|ENETUNREACH|handshake|Connection lost|socket hang up|read ECONN|write ECONN|Network Error|aborted/i.test(msg);
+}
+
+/**
+ * Executa uma operacao SFTP com retry automatico. Se a conexao morrer
+ * mid-op, descarta-a do pool, pega outra e tenta de novo (ate 4x com backoff).
+ */
+async function withClientRetry<T>(op: (c: Client) => Promise<T>): Promise<T> {
+  const MAX_ATTEMPTS = 4;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let c: Client;
+    try {
+      c = await getClient();
+    } catch (err) {
+      lastErr = err;
+      if (attempt < MAX_ATTEMPTS - 1) await sleep(400 * (attempt + 1));
+      continue;
+    }
+    try {
+      return await op(c);
+    } catch (err) {
+      lastErr = err;
+      const idx = _pool.indexOf(c);
+      if (idx >= 0) _pool[idx] = null;
+      try {
+        await c.end();
+      } catch {
+        // best-effort
+      }
+      if (attempt < MAX_ATTEMPTS - 1) {
+        const delay = isTransientError(err) ? 400 * (attempt + 1) : 1000 * (attempt + 1);
+        await sleep(delay);
+      }
+    }
+  }
+  throw lastErr;
 }
 
 /** Caminho absoluto do arquivo no servidor = remoteDir + relativePath. Sempre com barra inicial. */
@@ -119,29 +189,29 @@ export function publicUrlFor(key: string): string {
   return `${base}/${publicRelativePath(key)}`;
 }
 
-/** Cria pastas recursivamente (mkdir -p). */
+/** Cria pastas recursivamente (mkdir -p). Resiliente a conexoes mortas. */
 async function mkdirp(absPath: string): Promise<void> {
-  const c = await getClient();
   const parts = absPath.split('/').filter(Boolean);
   let cur = '';
   for (const p of parts) {
     cur = cur ? `${cur}/${p}` : `/${p}`;
-    try {
-      await c.mkdir(cur, true);
-    } catch (err) {
-      const e = err as Error;
-      if (!/already exists/i.test(e.message)) throw e;
-    }
+    await withClientRetry(async (c) => {
+      try {
+        await c.mkdir(cur, true);
+      } catch (err) {
+        const e = err as Error;
+        if (!/already exists/i.test(e.message)) throw e;
+      }
+    });
   }
 }
 
-/** Faz upload de um Buffer (JPG/PNG) pro SFTP. Retorna a URL publica. */
+/** Faz upload de um Buffer (JPG/PNG) pro SFTP. Retorna a URL publica. Resiliente a falhas transientes. */
 export async function uploadBuffer(key: string, buf: Buffer, _contentType = 'image/jpeg'): Promise<string> {
   const absPath = remoteAbsPath(key);
   const parent = dirname(absPath);
   await mkdirp(parent);
-  const c = await getClient();
-  await c.put(buf, absPath);
+  await withClientRetry(async (c) => c.put(buf, absPath));
   return publicUrlFor(key);
 }
 
@@ -172,27 +242,27 @@ export async function objectExists(key: string): Promise<boolean> {
   });
 }
 
-/** Deleta um arquivo no SFTP (best-effort — nao lanca se 404). */
+/** Deleta um arquivo no SFTP (best-effort — nao lanca se 404). Resiliente a falhas transientes. */
 export async function deleteObject(key: string): Promise<void> {
   const absPath = remoteAbsPath(key);
-  const c = await getClient();
-  try {
-    await c.delete(absPath);
-  } catch (err) {
-    const e = err as Error & { code?: string };
-    if (e.code === 'ENOENT' || /no such file/i.test(e.message)) return;
-    throw err;
-  }
+  await withClientRetry(async (c) => {
+    try {
+      await c.delete(absPath);
+    } catch (err) {
+      const e = err as Error & { code?: string };
+      if (e.code === 'ENOENT' || /no such file/i.test(e.message)) return;
+      throw err;
+    }
+  });
 }
 
 /**
  * Lista todas as keys (caminhos relativos) dentro de remoteDir.
- * Retorna array de strings (keys com extensao).
+ * Retorna array de strings (keys com extensao). Resiliente a falhas transientes.
  */
 export async function listAllKeys(): Promise<string[]> {
   const cfg = getConfigFromEnv();
-  const c = await getClient();
-  const items = await c.list(cfg.remoteDir);
+  const items = await withClientRetry(async (c) => c.list(cfg.remoteDir));
   const keys: string[] = [];
   for (const item of items) {
     if (item.type === '-' && item.name) keys.push(item.name);
@@ -231,10 +301,16 @@ export function capaKey(codigo: string, ultimaAtualizacao?: string | null): stri
 /** Alias pra compat com gerar-capas (capaPublicId era sem extensao no Cloudinary). */
 export const capaPublicId = capaKey;
 
-/** Fecha todas as conexoes do pool SFTP (chamar no fim do processo). */
+/** Fecha todas as conexoes do pool SFTP (chamar no fim do processo). Nunca lanca. */
 export function closeStorageClient(): void {
   for (const c of _pool) {
-    c.end().catch(() => {});
+    if (c) {
+      try {
+        c.end().catch(() => {});
+      } catch {
+        // best-effort
+      }
+    }
   }
   _pool = [];
   _poolReady = [];

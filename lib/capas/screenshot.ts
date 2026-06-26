@@ -81,8 +81,22 @@ export async function closeBrowser(): Promise<void> {
   }
 }
 
-/** Renderiza HTML → JPG Buffer (quality 85). Reaproveita browser, abre nova page cada chamada. */
+/** Renderiza HTML → JPG Buffer (quality 85). Reaproveita browser, abre nova page cada chamada. Retry em timeout/page-closed. */
 export async function screenshotHtml(html: string, opts: ScreenshotOptions): Promise<Buffer> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await screenshotHtmlOnce(html, opts);
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/timeout|timed out|Target closed|Navigation|closed|not opened/i.test(msg)) throw err;
+    }
+  }
+  throw lastErr;
+}
+
+async function screenshotHtmlOnce(html: string, opts: ScreenshotOptions): Promise<Buffer> {
   const browser = await getBrowser();
   const page: Page = await browser.newPage();
 
