@@ -7,6 +7,7 @@ export type SyncResult = {
   synced: number;
   errors: number;
   skipped: number;
+  deactivated: number;
   duration_ms: number;
 };
 
@@ -378,9 +379,15 @@ export async function syncImoveisFromXML(_useCache = false, budgetMs = 600_000):
   const totalXML = records.length;
   console.info(`[xml-sync] XML parseado: ${totalXML} imóveis`);
 
-  // Sync incremental — lê todos os códigos + ultima_atualizacao do banco
-  const rs = await client.execute('SELECT codigo, ultima_atualizacao FROM imoveis');
-  const existingRows = rs.rows as unknown as ReadonlyArray<{ codigo: string; ultima_atualizacao: string | null }>;
+  // Sync incremental — lê todos os códigos + ultima_atualizacao + status do banco
+  const rs = await client.execute(
+    'SELECT codigo, ultima_atualizacao, status_anuncio FROM imoveis',
+  );
+  const existingRows = rs.rows as unknown as ReadonlyArray<{
+    codigo: string;
+    ultima_atualizacao: string | null;
+    status_anuncio: string | null;
+  }>;
 
   let toUpsert = records;
 
@@ -403,6 +410,7 @@ export async function syncImoveisFromXML(_useCache = false, budgetMs = 600_000):
   let synced = 0;
   let errors = 0;
   let skipped = 0;
+  let deactivated = 0;
   const BATCH = 50;
   const BUDGET_MS = budgetMs;
 
@@ -418,11 +426,61 @@ export async function syncImoveisFromXML(_useCache = false, budgetMs = 600_000):
     errors += result.errors;
   }
 
+  // ── Soft delete: marcar Inativo os imóveis que saíram do XML ──────────────
+  // Só roda se o XML trouxe imóveis (guard contra XML vazio/quebrado, que
+  // poderia desativar o catálogo inteiro por engano). xmlCodes contém TODOS os
+  // códigos do XML (mesmo os não upsertados por budget), então desativar é
+  // seguro mesmo se o sync foi interrompido no meio.
+  if (totalXML > 0 && existingRows.length > 0) {
+    const xmlCodes = new Set(records.map((r) => String(r.codigo).toUpperCase()));
+    const toDeactivate = existingRows.filter(
+      (r) =>
+        !xmlCodes.has(String(r.codigo).toUpperCase()) &&
+        String(r.status_anuncio ?? '').toLowerCase() !== 'inativo',
+    );
+
+    if (toDeactivate.length > 0) {
+      console.info(
+        `[xml-sync] Soft delete: ${toDeactivate.length} imóveis ausentes do XML → Inativo`,
+      );
+      const nowIso = new Date().toISOString();
+      const DEACT_BATCH = 100;
+      let deactErrors = 0;
+      for (let i = 0; i < toDeactivate.length; i += DEACT_BATCH) {
+        const chunk = toDeactivate.slice(i, i + DEACT_BATCH);
+        const placeholders = chunk.map(() => '?').join(', ');
+        try {
+          await client.execute({
+            sql: `UPDATE imoveis SET status_anuncio = 'Inativo', updated_at = ? WHERE codigo IN (${placeholders})`,
+            args: [
+              nowIso,
+              ...chunk.map((r) => String(r.codigo).toUpperCase()),
+            ],
+          });
+          deactivated += chunk.length;
+        } catch (err) {
+          deactErrors += chunk.length;
+          console.error(
+            `[xml-sync] Erro ao desativar batch de ${chunk.length}:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
+      if (deactErrors > 0) {
+        console.warn(`[xml-sync] ${deactErrors} imóveis não puderam ser desativados`);
+      }
+    } else {
+      console.info('[xml-sync] Soft delete: nenhum imóvel ausente do XML');
+    }
+  }
+
   const duration_ms = Date.now() - start;
-  console.info(`[xml-sync] Concluído: ${synced} upserts, ${errors} erros, ${skipped} ignorados, ${duration_ms}ms`);
+  console.info(
+    `[xml-sync] Concluído: ${synced} upserts, ${deactivated} desativados, ${errors} erros, ${skipped} ignorados, ${duration_ms}ms`,
+  );
 
   client.close();
-  return { synced, errors, skipped, duration_ms };
+  return { synced, errors, skipped, deactivated, duration_ms };
 }
 
 /**

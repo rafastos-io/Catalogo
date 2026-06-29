@@ -29,6 +29,7 @@ async function main() {
 
     console.log('\n✅ Sincronização concluída:');
     console.log(`   Sincronizados: ${result.synced}`);
+    console.log(`   Desativados:   ${result.deactivated}`);
     console.log(`   Erros:         ${result.errors}`);
     console.log(`   Pulados:       ${result.skipped}`);
     console.log(`   Tempo total:   ${duration}s`);
