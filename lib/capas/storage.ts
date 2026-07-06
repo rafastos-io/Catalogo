@@ -43,7 +43,7 @@ function getConfigFromEnv(): StorageConfig {
       'STORAGE env vars faltando. Configure STORAGE_SFTP_HOST, STORAGE_SFTP_PORT, STORAGE_SFTP_USER, STORAGE_SFTP_PASS, STORAGE_PUBLIC_URL, STORAGE_REMOTE_DIR.',
     );
   }
-  const sftpPort = sftpPortRaw ? parseInt(sftpPortRaw, 10) : 6502;
+  const sftpPort = sftpPortRaw ? parseInt(sftpPortRaw, 10) : 65002; // porta SFTP/SSH padrao da Hostinger
   if (isNaN(sftpPort)) throw new Error('STORAGE_SFTP_PORT invalido');
   const poolSizeRaw = process.env.STORAGE_POOL_SIZE;
   const poolSize = poolSizeRaw ? Math.max(1, parseInt(poolSizeRaw, 10)) : DEFAULT_POOL_SIZE;
