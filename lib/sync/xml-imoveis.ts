@@ -8,6 +8,7 @@ export type SyncResult = {
   errors: number;
   skipped: number;
   deactivated: number;
+  reconciliationSkipped: boolean;
   duration_ms: number;
 };
 
@@ -395,9 +396,19 @@ export async function syncImoveisFromXML(_useCache = false, budgetMs = 600_000):
     const dbMap = new Map<string, string | null>(
       existingRows.map((r) => [String(r.codigo).toUpperCase(), r.ultima_atualizacao ?? null]),
     );
+    const dbStatusMap = new Map<string, string>(
+      existingRows.map((r) => [
+        String(r.codigo).toUpperCase(),
+        String(r.status_anuncio ?? '').toLowerCase(),
+      ]),
+    );
     toUpsert = records.filter((r) => {
       const code = String(r.codigo).toUpperCase();
       if (!dbMap.has(code)) return true; // novo
+      // Voltou ao feed mas o banco o tem como Inativo → reprocessa para reativar
+      // (o upsert recomputa status_anuncio a partir de Publicar). Necessário
+      // porque um imóvel pode reaparecer sem mudar ultima_atualizacao.
+      if (dbStatusMap.get(code) === 'inativo') return true;
       const xmlDate = (r.ultima_atualizacao as string | null) ?? null;
       if (!xmlDate) return true; // sem data no XML → reescreve
       return dbMap.get(code) !== xmlDate; // mudou?
@@ -411,6 +422,7 @@ export async function syncImoveisFromXML(_useCache = false, budgetMs = 600_000):
   let errors = 0;
   let skipped = 0;
   let deactivated = 0;
+  let reconciliationSkipped = false;
   const BATCH = 50;
   const BUDGET_MS = budgetMs;
 
@@ -431,7 +443,27 @@ export async function syncImoveisFromXML(_useCache = false, budgetMs = 600_000):
   // poderia desativar o catálogo inteiro por engano). xmlCodes contém TODOS os
   // códigos do XML (mesmo os não upsertados por budget), então desativar é
   // seguro mesmo se o sync foi interrompido no meio.
-  if (totalXML > 0 && existingRows.length > 0) {
+  //
+  // Trava de segurança: se o feed vier truncado (falha parcial/manutenção da
+  // Kenlo), pular a reconciliação para não marcar o catálogo inteiro como Inativo.
+  // Considera-se suspeito um feed abaixo de um piso absoluto OU abaixo de uma
+  // fração dos imóveis hoje ativos no banco.
+  const MIN_FEED_ABS = 5000; // piso absoluto (catálogo ~12k; ajustável)
+  const MIN_FEED_RATIO = 0.5; // ou < 50% dos ativos atuais
+  const ativosNoBanco = existingRows.filter(
+    (r) => String(r.status_anuncio ?? '').toLowerCase() === 'ativo',
+  ).length;
+  const feedSuspeito =
+    totalXML < MIN_FEED_ABS || totalXML < ativosNoBanco * MIN_FEED_RATIO;
+
+  if (totalXML > 0 && existingRows.length > 0 && feedSuspeito) {
+    reconciliationSkipped = true;
+    console.warn(
+      `[xml-sync] Trava de segurança: feed com ${totalXML} imóveis ` +
+        `(ativos no banco: ${ativosNoBanco}). Reconciliação PULADA — ` +
+        `nenhum imóvel desativado nesta execução.`,
+    );
+  } else if (totalXML > 0 && existingRows.length > 0) {
     const xmlCodes = new Set(records.map((r) => String(r.codigo).toUpperCase()));
     const toDeactivate = existingRows.filter(
       (r) =>
@@ -476,11 +508,13 @@ export async function syncImoveisFromXML(_useCache = false, budgetMs = 600_000):
 
   const duration_ms = Date.now() - start;
   console.info(
-    `[xml-sync] Concluído: ${synced} upserts, ${deactivated} desativados, ${errors} erros, ${skipped} ignorados, ${duration_ms}ms`,
+    `[xml-sync] Concluído: ${synced} upserts, ${deactivated} desativados` +
+      `${reconciliationSkipped ? ' (reconciliação pulada pela trava)' : ''}` +
+      `, ${errors} erros, ${skipped} ignorados, ${duration_ms}ms`,
   );
 
   client.close();
-  return { synced, errors, skipped, deactivated, duration_ms };
+  return { synced, errors, skipped, deactivated, reconciliationSkipped, duration_ms };
 }
 
 /**
