@@ -127,10 +127,29 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * Timeout de UMA operacao SFTP individual (put/mkdir/delete/list).
+ * Sem isso, um socket "meio-morto" (servidor para de responder mas nao envia
+ * RST) faz o put pendurar pra sempre -> Promise.all nunca resolve -> o processo
+ * inteiro congela (foi o que travou o run de capas por ~1h30). Com timeout, a op
+ * vira erro transiente -> withClientRetry descarta a conexao e reconecta.
+ */
+const OP_TIMEOUT_MS = Number(process.env.STORAGE_OP_TIMEOUT_MS) || 60_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`SFTP op timeout (${label}) apos ${ms}ms`)), ms);
+    p.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
 /** True se o erro indicar problema de conexao/transiente. */
 function isTransientError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE|EHOSTUNREACH|ENETUNREACH|handshake|Connection lost|socket hang up|read ECONN|write ECONN|Network Error|aborted/i.test(msg);
+  return /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE|EHOSTUNREACH|ENETUNREACH|handshake|Connection lost|socket hang up|read ECONN|write ECONN|Network Error|aborted|SFTP op timeout/i.test(msg);
 }
 
 /**
@@ -150,7 +169,7 @@ async function withClientRetry<T>(op: (c: Client) => Promise<T>): Promise<T> {
       continue;
     }
     try {
-      return await op(c);
+      return await withTimeout(op(c), OP_TIMEOUT_MS, `attempt ${attempt + 1}`);
     } catch (err) {
       lastErr = err;
       const idx = _pool.indexOf(c);
@@ -189,12 +208,19 @@ export function publicUrlFor(key: string): string {
   return `${base}/${publicRelativePath(key)}`;
 }
 
-/** Cria pastas recursivamente (mkdir -p). Resiliente a conexoes mortas. */
+// Cache de pastas ja garantidas nesta execucao. Sem isso, mkdirp rodava antes
+// de CADA upload (10k+ uploads na mesma pasta = dezenas de milhares de mkdir
+// SFTP redundantes -> martelava a Hostinger e alimentava o flood de ECONNRESET).
+const _ensuredDirs = new Set<string>();
+
+/** Cria pastas recursivamente (mkdir -p). Resiliente a conexoes mortas. Idempotente via cache. */
 async function mkdirp(absPath: string): Promise<void> {
+  if (_ensuredDirs.has(absPath)) return;
   const parts = absPath.split('/').filter(Boolean);
   let cur = '';
   for (const p of parts) {
     cur = cur ? `${cur}/${p}` : `/${p}`;
+    if (_ensuredDirs.has(cur)) continue;
     await withClientRetry(async (c) => {
       try {
         await c.mkdir(cur, true);
@@ -203,7 +229,9 @@ async function mkdirp(absPath: string): Promise<void> {
         if (!/already exists/i.test(e.message)) throw e;
       }
     });
+    _ensuredDirs.add(cur);
   }
+  _ensuredDirs.add(absPath);
 }
 
 /** Faz upload de um Buffer (JPG/PNG) pro SFTP. Retorna a URL publica. Resiliente a falhas transientes. */
@@ -327,4 +355,5 @@ export function closeStorageClient(): void {
   _poolReady = [];
   _poolInitStarted = false;
   _rrIndex = 0;
+  _ensuredDirs.clear();
 }
