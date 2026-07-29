@@ -4,9 +4,10 @@
  * One-shot: remove do storage SFTP (Hostinger) todas as capas que nao sao
  * a versao "viva" atual.
  *
- * Considera "viva" a key = capaKey(codigo, ultima_atualizacao_gerada)
- * pra cada row em capas_imoveis. Qualquer outro arquivo .jpg na pasta
- * capas/ do storage que nao casa com uma key viva e orfao.
+ * Considera "viva" a key derivada do capa_url gravado em capas_imoveis
+ * (basename da URL). Isso e independente do esquema de nomes da capa —
+ * sempre reflete o arquivo que o feed realmente aponta. Qualquer outro
+ * arquivo .jpg na pasta capas/ do storage que nao casa e orfao.
  *
  * Uso:
  *   npx tsx scripts/limpar-storage-orfaos.ts [--dry-run]
@@ -18,7 +19,7 @@
  */
 
 import { createClient } from '@libsql/client';
-import { capaKey, listAllKeys, deleteKeys, closeStorageClient } from '../lib/capas/storage.js';
+import { listAllKeys, deleteKeys, closeStorageClient } from '../lib/capas/storage.js';
 
 function parseBool(name: string): boolean {
   return process.argv.includes(`--${name}`);
@@ -34,12 +35,13 @@ async function main() {
   const turso = createClient({ url, authToken });
 
   console.log('[limpar-orfaos] Lendo capas_imoveis do Turso...');
-  const rs = await turso.execute('SELECT codigo, ultima_atualizacao_gerada FROM capas_imoveis');
+  const rs = await turso.execute('SELECT capa_url FROM capas_imoveis');
   const liveKeys = new Set<string>();
   for (const row of rs.rows) {
-    const codigo = String(row.codigo);
-    const ver = (row.ultima_atualizacao_gerada as string | null) ?? null;
-    liveKeys.add(capaKey(codigo, ver));
+    const url = (row.capa_url as string | null) ?? '';
+    if (!url) continue;
+    const key = url.split('/').pop(); // basename = key (arquivos ficam na raiz de capas/)
+    if (key) liveKeys.add(key);
   }
   console.log(`[limpar-orfaos] ${liveKeys.size} capas vivas registradas no banco`);
 

@@ -285,15 +285,26 @@ export async function deleteKeys(keys: string[]): Promise<number> {
 }
 
 /**
- * Key padrao da capa: {codigo}_{ultima_atualizacao}.jpg
- * Versao com data no nome -> URL unica por versao -> cache CDN imutavel.
- * Se ultimaAtualizacao for null/vazio, usa so o codigo (compat).
+ * Key padrao da capa: {codigo}_{content_hash}.jpg
+ *
+ * Versionada pelo CONTENT HASH (nao pela data): a URL passa a ser funcao pura
+ * do conteudo visual da capa (preco, fotos, quartos, etc). Consequencias:
+ *   - Conteudo muda -> hash muda -> nome/URL muda -> Facebook rebusca a imagem
+ *     (cache-bust automatico) e a checagem "ja existe no storage?" retorna false
+ *     corretamente, forcando o render.
+ *   - Conteudo igual -> hash igual -> mesma URL -> cache CDN/FB imutavel, sem
+ *     regerar a toa (mesmo que a data de atualizacao do XML mude todo dia).
+ *
+ * Isso mantem a chave do arquivo COERENTE com a decisao de regeração (que usa
+ * o mesmo content_hash). Se contentHash for null/vazio, usa so o codigo (compat).
  */
-export function capaKey(codigo: string, ultimaAtualizacao?: string | null): string {
+export function capaKey(codigo: string, contentHash?: string | null): string {
   const code = codigo.toUpperCase();
-  if (ultimaAtualizacao && ultimaAtualizacao.trim()) {
-    const ver = ultimaAtualizacao.replace(/-/g, '').slice(0, 8);
-    return `${code}_${ver}.jpg`;
+  if (contentHash && contentHash.trim()) {
+    // Sanitiza: mantem so hex (o hash e sha256 hex de 16 chars). Evita qualquer
+    // caractere que quebre o caminho no SFTP/URL.
+    const ver = contentHash.trim().replace(/[^a-fA-F0-9]/g, '').slice(0, 16);
+    if (ver) return `${code}_${ver}.jpg`;
   }
   return `${code}.jpg`;
 }

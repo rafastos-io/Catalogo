@@ -157,7 +157,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
         if (i >= toProcess.length) return;
         const im = toProcess[i];
         try {
-          const exists = await objectExists(capaKey(im.codigo, im.ultima_atualizacao));
+          const exists = await objectExists(capaKey(im.codigo, computeContentHash(im)));
           if (exists) skipExistentes.push(im);
           else needRender.push(im);
         } catch {
@@ -170,8 +170,8 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
     renderList = needRender;
     // Pra quem ja ta no storage mas nao esta em capas_imoveis, atualiza o banco
     for (const im of skipExistentes) {
-      const capaUrl = publicUrlFor(capaKey(im.codigo, im.ultima_atualizacao));
       const currentHash = computeContentHash(im);
+      const capaUrl = publicUrlFor(capaKey(im.codigo, currentHash));
       await turso.execute({
         sql: `INSERT INTO capas_imoveis (codigo, capa_url, ultima_atualizacao_gerada, content_hash, gerado_em) VALUES (?, ?, ?, ?, ?) ON CONFLICT(codigo) DO UPDATE SET capa_url=excluded.capa_url, ultima_atualizacao_gerada=excluded.ultima_atualizacao_gerada, content_hash=excluded.content_hash, gerado_em=excluded.gerado_em`,
         args: [im.codigo.toUpperCase(), capaUrl, im.ultima_atualizacao ?? null, currentHash, new Date().toISOString()],
@@ -198,9 +198,9 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
 
   // Upload + registro no banco + cleanup da versão antiga. Lança em caso de erro.
   const processUpload = async (im: ImovelRow, img: Buffer): Promise<void> => {
-    const key = capaKey(im.codigo, im.ultima_atualizacao);
-    const capaUrl = await uploadPng(key, img);
     const currentHash = computeContentHash(im);
+    const key = capaKey(im.codigo, currentHash);
+    const capaUrl = await uploadPng(key, img);
     await turso.execute({
       sql: `INSERT INTO capas_imoveis (codigo, capa_url, ultima_atualizacao_gerada, content_hash, gerado_em) VALUES (?, ?, ?, ?, ?) ON CONFLICT(codigo) DO UPDATE SET capa_url=excluded.capa_url, ultima_atualizacao_gerada=excluded.ultima_atualizacao_gerada, content_hash=excluded.content_hash, gerado_em=excluded.gerado_em`,
       args: [im.codigo.toUpperCase(), capaUrl, im.ultima_atualizacao ?? null, currentHash, new Date().toISOString()],
@@ -208,7 +208,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
     // Deleta a versao antiga da capa (se houver) pra nao acumular orfaos no storage
     const existing = capasMap.get(im.codigo.toUpperCase());
     if (existing) {
-      const oldKey = capaKey(im.codigo, existing.ultimaAtualizacaoGerada);
+      const oldKey = capaKey(im.codigo, existing.contentHash);
       if (oldKey !== key) {
         try {
           await deleteObject(oldKey);

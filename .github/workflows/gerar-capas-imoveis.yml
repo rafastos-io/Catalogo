@@ -52,11 +52,12 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
-      - name: Popular content_hash (garante incremental correto)
-        env:
-          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
-          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
-        run: npm run popular-content-hash
+      # NOTA: o passo "Popular content_hash" foi REMOVIDO daqui.
+      # Ele e uma migracao one-shot (scripts/popular-content-hash.ts) e, rodando
+      # todo dia ANTES da geracao, gravava o hash atual em capas_imoveis sem
+      # regerar a capa — fazendo o incremental por content_hash pular TODOS os
+      # imoveis (capa nunca atualizava quando o preco mudava). Rode o script
+      # manualmente apenas se precisar re-backfill a coluna content_hash.
 
       - name: Gerar capas
         env:
