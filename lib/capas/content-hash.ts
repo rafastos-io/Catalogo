@@ -39,3 +39,28 @@ export function computeContentHash(im: ImovelDados): string {
   const serialized = serializeImovelForHash(im);
   return createHash('sha256').update(serialized).digest('hex').slice(0, 16);
 }
+
+export interface CapaUpToDateInput {
+  currentHash: string;      // computeContentHash(imovel) — hash do conteudo atual
+  expectedUrl: string;      // publicUrlFor(capaKey(codigo, currentHash)) — URL content-addressed esperada
+  dbHash: string | null;    // capas_imoveis.content_hash gravado
+  dbUrl: string | null;     // capas_imoveis.capa_url gravado
+}
+
+/**
+ * True quando o banco CONFIRMA que a capa content-addressed atual ja esta no ar:
+ * o content_hash gravado bate com o atual E a capa_url gravada e exatamente a
+ * URL esperada pra esse hash. So nesse caso da pra pular sem checar o storage.
+ *
+ * Exigir as DUAS condicoes e o que torna o incremental auto-corretivo e imune ao
+ * "hash envenenado": se o hash bate por acaso (ex: o antigo passo
+ * popular-content-hash carimbou o hash atual) mas a capa_url aponta pra outro
+ * arquivo — esquema antigo por data, ou upload que nunca completou (straggler) —
+ * entao NAO esta up-to-date, e o imovel vira candidato a re-render.
+ */
+export function isCapaUpToDate(d: CapaUpToDateInput): boolean {
+  return (
+    d.dbHash != null && d.dbHash === d.currentHash &&
+    d.dbUrl != null && d.dbUrl === d.expectedUrl
+  );
+}

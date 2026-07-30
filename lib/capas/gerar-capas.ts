@@ -9,7 +9,7 @@ import { BRAND_KIT, logoToDataUri } from './brand-kit.js';
 import { renderTemplateHtml, type ImovelDados } from './token-renderer.js';
 import { screenshotBatch, closeBrowser, type ScreenshotOptions } from './screenshot.js';
 import { uploadPng, capaKey, publicUrlFor, objectExists, deleteObject, closeStorageClient } from './storage.js';
-import { computeContentHash } from './content-hash.js';
+import { computeContentHash, isCapaUpToDate } from './content-hash.js';
 
 export interface GerarCapasOptions {
   limit?: number; // se setado, processa só N imóveis (dry-run)
@@ -89,11 +89,11 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
   // Lê capas já geradas (controle incremental por content_hash).
   // Paginado pra evitar truncamento do @libsql/client em queries grandes.
   console.info('[capas] Lendo capas_imoveis do Turso (cursor pagination)...');
-  const capasMap = new Map<string, { ultimaAtualizacaoGerada: string | null; contentHash: string | null }>();
+  const capasMap = new Map<string, { ultimaAtualizacaoGerada: string | null; contentHash: string | null; capaUrl: string | null }>();
   let capasCursor = '';
   while (true) {
     const capasRs = await turso.execute({
-      sql: 'SELECT codigo, ultima_atualizacao_gerada, content_hash FROM capas_imoveis WHERE codigo > ? ORDER BY codigo LIMIT 1000',
+      sql: 'SELECT codigo, ultima_atualizacao_gerada, content_hash, capa_url FROM capas_imoveis WHERE codigo > ? ORDER BY codigo LIMIT 1000',
       args: [capasCursor],
     });
     if (capasRs.rows.length === 0) break;
@@ -101,6 +101,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
       capasMap.set(String(row.codigo).toUpperCase(), {
         ultimaAtualizacaoGerada: (row.ultima_atualizacao_gerada as string | null) ?? null,
         contentHash: (row.content_hash as string | null) ?? null,
+        capaUrl: (row.capa_url as string | null) ?? null,
       });
     }
     capasCursor = String(capasRs.rows[capasRs.rows.length - 1].codigo);
@@ -108,54 +109,43 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
   }
   console.info(`[capas] ${capasMap.size} capas já geradas anteriormente`);
 
-  // Filtra quem precisa de capa (incremental por content_hash).
-  // Compara o hash dos campos atuais do imovel com o hash gravado na ultima
-  // geracao. Se for igual, a capa visualmente nao mudou → skipa. Se diferir
-  // (ou se nunca gerou), processa.
-  let toProcess: ImovelRow[] = imoveis;
-  if (!force) {
-    toProcess = imoveis.filter((im) => {
-      const existing = capasMap.get(im.codigo.toUpperCase());
-      if (existing == null) return true; // nunca gerou
-      const currentHash = computeContentHash(im);
-      return existing.contentHash !== currentHash; // hash mudou → regera
-    });
-    console.info(`[capas] Incremental: ${toProcess.length} de ${imoveis.length} a processar (por content_hash)`);
-  } else {
+  // Decide quem precisa de capa (incremental AUTO-CORRETIVO).
+  //   - force: regera tudo.
+  //   - senao: pula so quem o banco CONFIRMA que ja tem a capa content-addressed
+  //     no ar (isCapaUpToDate = content_hash atual E capa_url == URL esperada).
+  //     Qualquer outro vira "candidato" e passa por uma checagem HEAD real no
+  //     storage: arquivo existe → so atualiza o banco e pula render; arquivo
+  //     faltando → renderiza. Isso e imune ao hash "envenenado" e conserta
+  //     sozinho stragglers (upload que nao completou) num rerun rapido.
+  let renderList: ImovelRow[];
+  if (force) {
+    renderList = imoveis;
     console.info(`[capas] Force: regerando todas as ${imoveis.length} capas`);
-  }
+  } else {
+    const candidates: ImovelRow[] = [];
+    let upToDate = 0;
+    for (const im of imoveis) {
+      const existing = capasMap.get(im.codigo.toUpperCase());
+      const currentHash = computeContentHash(im);
+      const expectedUrl = publicUrlFor(capaKey(im.codigo, currentHash));
+      if (isCapaUpToDate({ currentHash, expectedUrl, dbHash: existing?.contentHash ?? null, dbUrl: existing?.capaUrl ?? null })) {
+        upToDate++;
+      } else {
+        candidates.push(im);
+      }
+    }
+    console.info(`[capas] Incremental: ${upToDate} ja no ar (banco confirma) · ${candidates.length} candidatas de ${imoveis.length}`);
 
-  // Aplica limit (dry-run)
-  if (opts.limit && opts.limit > 0) {
-    toProcess = toProcess.slice(0, opts.limit);
-    console.info(`[capas] Limit: processando só ${toProcess.length} imóveis`);
-  }
-
-  if (toProcess.length === 0) {
-    console.info('[capas] Nada a processar — todas as capas estão atualizadas');
-    try { await closeBrowser(); } catch {}
-    try { closeStorageClient(); } catch {}
-    try { turso.close(); } catch {}
-    return { total: imoveis.length, gerados: 0, skippados: imoveis.length, erros: 0, durationMs: Date.now() - start };
-  }
-
-  // Pre-filtra quem ja tem JPG no storage (evita re-render quando capa existe mas
-  // capas_imoveis esta desatualizada — edge case de migrations).
-  // Skip inteiro se capasMap vazio (fresh load: todos precisam render mesmo).
-  // Skip se force (vai regerar tudo independente).
-  let renderList: ImovelRow[] = toProcess;
-  if (!force && capasMap.size > 0 && toProcess.length > 0) {
-    console.info('[capas] Checando existencia no storage (HEAD paralelo) pra skips adicionais...');
-    const skipExistentes: ImovelRow[] = [];
+    // Checa existencia real no storage (HEAD paralelo) só pros candidatos.
     const needRender: ImovelRow[] = [];
-    // HEAD checks paralelos (concurrency = 20) pra nao bloquear
+    const skipExistentes: ImovelRow[] = [];
     const HEAD_CONCURRENCY = 20;
     let headCursor = 0;
     async function headWorker() {
       while (true) {
         const i = headCursor++;
-        if (i >= toProcess.length) return;
-        const im = toProcess[i];
+        if (i >= candidates.length) return;
+        const im = candidates[i];
         try {
           const exists = await objectExists(capaKey(im.codigo, computeContentHash(im)));
           if (exists) skipExistentes.push(im);
@@ -165,10 +155,12 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
         }
       }
     }
-    await Promise.all(Array.from({ length: Math.min(HEAD_CONCURRENCY, toProcess.length) }, () => headWorker()));
-    console.info(`[capas]   ${skipExistentes.length} ja no storage (skip) · ${needRender.length} precisam render`);
-    renderList = needRender;
-    // Pra quem ja ta no storage mas nao esta em capas_imoveis, atualiza o banco
+    if (candidates.length > 0) {
+      console.info('[capas] Checando existencia no storage (HEAD paralelo)...');
+      await Promise.all(Array.from({ length: Math.min(HEAD_CONCURRENCY, candidates.length) }, () => headWorker()));
+      console.info(`[capas]   ${skipExistentes.length} ja no storage (so atualiza banco) · ${needRender.length} precisam render`);
+    }
+    // Pra quem ja tem o arquivo no storage mas o registro estava defasado, corrige o banco.
     for (const im of skipExistentes) {
       const currentHash = computeContentHash(im);
       const capaUrl = publicUrlFor(capaKey(im.codigo, currentHash));
@@ -177,6 +169,21 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
         args: [im.codigo.toUpperCase(), capaUrl, im.ultima_atualizacao ?? null, currentHash, new Date().toISOString()],
       });
     }
+    renderList = needRender;
+  }
+
+  // Aplica limit (dry-run)
+  if (opts.limit && opts.limit > 0) {
+    renderList = renderList.slice(0, opts.limit);
+    console.info(`[capas] Limit: renderizando só ${renderList.length} imóveis`);
+  }
+
+  if (renderList.length === 0) {
+    console.info('[capas] Nada a renderizar — todas as capas já estão no ar');
+    try { await closeBrowser(); } catch {}
+    try { closeStorageClient(); } catch {}
+    try { turso.close(); } catch {}
+    return { total: imoveis.length, gerados: 0, skippados: imoveis.length, erros: 0, durationMs: Date.now() - start };
   }
 
   // Dimensões do screenshot
@@ -263,8 +270,8 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
   const gerados = [...status.values()].filter((s) => s === 'ok').length;
   const erros = [...status.values()].filter((s) => s === 'error').length;
 
-  // Conta skips (capas que já existiam)
-  const skippados = toProcess.length - gerados - erros;
+  // Skips = tudo que não foi renderizado agora nem deu erro (já estava no ar).
+  const skippados = imoveis.length - gerados - erros;
 
   // Cleanup (defensivo — nunca deixa exception escapar e derrubar o processo)
   try { await closeBrowser(); } catch {}
