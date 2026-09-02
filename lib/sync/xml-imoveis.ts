@@ -334,6 +334,7 @@ async function upsertBatch(
 
 // ── Core sync ───────────────────────────────────────────────────────────────
 
+/** budgetMs <= 0 = sem teto de tempo (VPS). GitHub Actions continua passando 10 min. */
 export async function syncImoveisFromXML(_useCache = false, budgetMs = 600_000): Promise<SyncResult> {
   const start = Date.now();
 
@@ -415,7 +416,7 @@ export async function syncImoveisFromXML(_useCache = false, budgetMs = 600_000):
   const BUDGET_MS = budgetMs;
 
   for (let i = 0; i < toUpsert.length; i += BATCH) {
-    if (Date.now() - start > BUDGET_MS) {
+    if (BUDGET_MS > 0 && Date.now() - start > BUDGET_MS) {
       console.warn(`[xml-sync] Budget atingido em ${i} — interrompendo.`);
       skipped += toUpsert.length - i;
       break;

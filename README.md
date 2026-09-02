@@ -1,8 +1,9 @@
 # Catalogo Sync (XML → Turso)
 
 Sync incremental do feed XML de imóveis para o banco **Turso** (libSQL/SQLite).
-Roda diariamente via GitHub Actions (19h BRT) e faz upsert apenas dos imóveis
-novos ou alterados.
+
+**Produção (em migração):** Coolify VPS — `catalogo.grupourban.cloud` (`npm start`). Cron 01:00 BRT. Ver `docs/COOLIFY.md`.  
+**Ainda no ar:** GitHub Actions (19h BRT) até o cutover. Não desligar o cron do Actions antes do teste.
 
 ```
 ┌─────────────────┐   cron diário    ┌──────────────────────┐
