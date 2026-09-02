@@ -9,3 +9,5 @@
 | Uso | dia a dia | mudança visual de capa |
 
 Sem `SYNC_DESLIGADO=1` no preview, um PR reescreve o catálogo de produção e sobe JPG na Hostinger.
+
+**Próxima alteração de capa:** branch + PR → conferir no preview → merge. As JPGs de produção atualizam na madrugada (01:00), não no instante do merge.

@@ -1,40 +1,30 @@
 # Coolify — Catálogo Meta
 
-App já criado: **Facebook / production / Catalogo**. Não recriar.
+App: **Facebook / production / Catalogo**. Não recriar.
 
-Depois do merge (ou no preview do PR), no painel:
-
-## Build
-
-1. **General → Build strategy:** `Dockerfile` (sair do Railpack / Nixpacks)
-2. Porta interna: `3000`
-3. Domínio: `https://catalogo.grupourban.cloud:3000` (já está)
-4. **Advanced → Custom Docker options:** `--shm-size=1g`  
-   (Chromium precisa de /dev/shm maior; o código também usa `--disable-dev-shm-usage`)
-
-## Healthcheck (ligar só com este código no ar)
-
-- Enable
-- GET `http` `localhost` porta **3000** path **`/health`** (não 80, não `/`)
-- Expected 200
-- Start period 40s
-
-## Preview
-
-- Template: `https://catalogo-pr-{{pr_id}}.grupourban.cloud:3000`
-- Env: `SYNC_DESLIGADO=1` + Turso (sem SFTP)
-- Abre `/?codigo=AP0221` para ver a capa. Não grava banco nem Hostinger.
+**Cutover 2026-09-02:** produção na VPS. GitHub Actions desligados. Meta puxa o XML desta URL.
 
 ## Produção
 
-Cron interno 01:00 BRT: sync → capas (concurrency 3) → feed, em sequência.  
-Feed público:
+| | |
+|--|--|
+| Domínio | `https://catalogo.grupourban.cloud` (porta interna **3000**) |
+| Health | `GET /health` |
+| Feed | `/facebook-home-listings.xml` e `.csv` |
+| Cron | **01:00 BRT** sync → capas (concurrency 3) → feed |
+| Meta | diário **04:00** → XML acima |
+| Capas | SFTP `capas.grupourban.app` |
+| Banco | Turso `catalogo-imoveis` |
 
-- `https://catalogo.grupourban.cloud/facebook-home-listings.csv`
-- `https://catalogo.grupourban.cloud/facebook-home-listings.xml`
+Custom Docker options (General → Runtime): `--shm-size=1g`
 
-**Não trocar a URL no Commerce Manager** até o teste passar. O GitHub Actions segue no ar.
+## Preview por PR
 
-## Resource Limits (Operations, final da sidebar)
+- URL: `https://catalogo-pr-{{pr_id}}.grupourban.cloud`
+- Env: `SYNC_DESLIGADO=1` + Turso (sem SFTP)
+- Capa: `/?codigo=AP0221` — só leitura
+- Merge em `main` publica o código; **JPG novo no Hostinger só na rodada 01:00**
 
-Teto sugerido: Memory **2048 MB**, CPU **2**. Não é reserva — o idle usa pouco.
+## GitHub Actions
+
+Workflows **disabled_manually**. O repo continua existindo: é a origem do Coolify. Não apagar o GitHub.
