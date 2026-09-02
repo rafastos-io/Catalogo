@@ -1,8 +1,7 @@
 name: Gerar Feed Facebook
 
 on:
-  schedule:
-    - cron: '0 3 * * *'   # 03:00 UTC = 00:00 BRT, todo dia (Capas pode durar 4h+)
+  # Cron desligado — feed público em catalogo.grupourban.cloud. workflow_dispatch = rollback.
   workflow_dispatch:
 
 permissions:

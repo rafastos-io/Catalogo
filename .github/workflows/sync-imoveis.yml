@@ -1,9 +1,9 @@
 name: Sync Imóveis
 
 on:
-  schedule:
-    - cron: '0 22 * * *'   # 22:00 UTC = 19:00 BRT, todo dia
-  workflow_dispatch:         # permite trigger manual pela UI do GitHub
+  # Cron desligado — produção na VPS (catalogo.grupourban.cloud) a partir de 2026-09-02.
+  # workflow_dispatch permanece para rollback manual.
+  workflow_dispatch:
 
 jobs:
   sync:
