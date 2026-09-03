@@ -3,6 +3,7 @@ import { existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { feedOutDir, isSyncDesligado } from '../runtime/flags.js';
 import { getStatus } from '../jobs/status.js';
+import { isPipelineRunning, runNightlyPipeline } from '../jobs/pipeline.js';
 import { previewRevision, renderPreviewPage } from '../capas/preview-page.js';
 
 function send(res: ServerResponse, status: number, body: string, type: string): void {
@@ -73,6 +74,32 @@ async function handleProduction(req: IncomingMessage, res: ServerResponse): Prom
     serveFeedFile(res, 'facebook-home-listings.xml', 'application/xml; charset=utf-8');
     return;
   }
+
+  // ── Trigger manual do pipeline ──────────────────────────────────────────────
+  // POST /trigger?token=<PIPELINE_TRIGGER_TOKEN>
+  // Inicia o pipeline noturno fora do cron. Responde imediatamente (202) e
+  // roda em background — acompanhe via GET /health.
+  if (u.pathname === '/trigger' && req.method === 'POST') {
+    const secret = process.env.PIPELINE_TRIGGER_TOKEN?.trim();
+    if (!secret) {
+      json(res, 503, { ok: false, error: 'PIPELINE_TRIGGER_TOKEN não configurado' });
+      return;
+    }
+    const token = u.searchParams.get('token') ?? '';
+    if (token !== secret) {
+      json(res, 401, { ok: false, error: 'token inválido' });
+      return;
+    }
+    if (isPipelineRunning()) {
+      json(res, 409, { ok: false, error: 'pipeline já em andamento', ...getStatus() });
+      return;
+    }
+    // Dispara em background — não await
+    void runNightlyPipeline();
+    json(res, 202, { ok: true, message: 'pipeline iniciado — acompanhe em /health' });
+    return;
+  }
+
   send(res, 404, 'not found', 'text/plain; charset=utf-8');
 }
 

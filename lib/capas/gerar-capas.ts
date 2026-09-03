@@ -6,7 +6,7 @@ import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { BRAND_KIT, logoToDataUri } from './brand-kit.js';
-import { renderTemplateHtml, type ImovelDados } from './token-renderer.js';
+import { renderTemplateHtml, fotoParaDataUri, type ImovelDados } from './token-renderer.js';
 import { screenshotBatch, closeBrowser, type ScreenshotOptions } from './screenshot.js';
 import { uploadPng, capaKey, publicUrlFor, objectExists, deleteObject, closeStorageClient } from './storage.js';
 import { computeContentHash, isCapaUpToDate } from './content-hash.js';
@@ -193,13 +193,32 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
   };
 
   // Render em batch (passo 1) + retry pass (passo 2) pra garantir resiliência.
+  // HTML é gerado sob demanda (foto baixada em RAM como base64, sem arquivo temporário).
   console.info(`[capas] Renderizando ${renderList.length} capas (concurrency=${concurrency})...`);
 
+  // Items: html é placeholder vazio — gerado on-demand no worker pra não manter
+  // 10k strings HTML em RAM ao mesmo tempo.
   const items = renderList.map((im) => ({
     imovel: im,
-    html: renderTemplateHtml(templateHtml, im, BRAND_KIT, logoDataUri, formato),
+    html: '', // preenchido on-demand em buildHtmlForItem
     opts: dims,
   }));
+
+  /** Gera o HTML com foto em base64 (em RAM, descartável). */
+  async function buildHtmlForItem(im: ImovelRow): Promise<string> {
+    // Resolve a URL da foto principal
+    let fotoUrl = im.foto_principal_url ?? '';
+    if (!fotoUrl && im.fotos_urls) {
+      try {
+        const arr = JSON.parse(im.fotos_urls as unknown as string) as unknown;
+        if (Array.isArray(arr) && arr.length > 0) fotoUrl = String(arr[0]);
+      } catch { /* ignora */ }
+    }
+    // Baixa em RAM → data URI → GC descarta depois do render
+    const fotoDataUri = fotoUrl ? await fotoParaDataUri(fotoUrl) : '';
+    const imComFoto = { ...im, foto_principal_url: fotoDataUri, fotos_urls: null };
+    return renderTemplateHtml(templateHtml, imComFoto, BRAND_KIT, logoDataUri, formato);
+  }
 
   const status = new Map<number, 'ok' | 'error'>();
 
@@ -247,24 +266,65 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
     }
   };
 
-  // Passo 1: render + upload em paralelo (concurrency alta).
-  await screenshotBatch(items, concurrency, async (item, idx, img, error) => {
-    const im = (item as { imovel: ImovelRow }).imovel;
-    const ok = await handleResult(im, img, error, 'render');
-    status.set(idx, ok ? 'ok' : 'error');
-  });
+  /**
+   * Renderiza um item: gera HTML on-demand (foto em base64 em RAM),
+   * tira screenshot e faz upload. HTML e buffer são descartados pelo GC.
+   */
+  async function renderItem(im: ImovelRow): Promise<Buffer> {
+    const html = await buildHtmlForItem(im);
+    const [result] = await screenshotBatch([{ imovel: im, html, opts: dims }], 1);
+    if (result.error) throw result.error;
+    if (!result.png) throw new Error('screenshot retornou nulo');
+    return result.png;
+  }
+
+  // Passo 1: render + upload em paralelo (concurrency limitada).
+  {
+    let cursor = 0;
+    async function worker() {
+      while (true) {
+        const i = cursor++;
+        if (i >= items.length) return;
+        const im = items[i].imovel;
+        try {
+          const img = await renderItem(im);
+          await processUpload(im, img);
+          status.set(i, 'ok');
+        } catch (err) {
+          console.error(`[capas] ❌ render ${im.codigo}: ${err instanceof Error ? err.message : err}`);
+          status.set(i, 'error');
+        }
+        const done = [...status.size ? status : new Map()].length;
+        if (done % 50 === 0 || done === items.length) {
+          console.info(`[capas] ${status.size}/${items.length} processados`);
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+  }
 
   // Passo 2: retry dos que falharam, com concurrency baixa (mais resiliente).
   const erroredIdxs = [...status.entries()].filter(([, s]) => s === 'error').map(([i]) => i);
   if (erroredIdxs.length > 0) {
     console.info(`[capas] Retry: ${erroredIdxs.length} capas com erro, retentando (concurrency=2)...`);
-    const retryItems = erroredIdxs.map((origIdx) => ({ ...items[origIdx], _origIdx: origIdx }));
-    await screenshotBatch(retryItems, 2, async (item, _retryIdx, img, error) => {
-      const origIdx = (item as { _origIdx: number })._origIdx;
-      const im = (item as { imovel: ImovelRow }).imovel;
-      const ok = await handleResult(im, img, error, 'retry');
-      status.set(origIdx, ok ? 'ok' : 'error');
-    });
+    let retryCursor = 0;
+    async function retryWorker() {
+      while (true) {
+        const j = retryCursor++;
+        if (j >= erroredIdxs.length) return;
+        const origIdx = erroredIdxs[j];
+        const im = items[origIdx].imovel;
+        try {
+          const img = await renderItem(im);
+          await processUpload(im, img);
+          status.set(origIdx, 'ok');
+        } catch (err) {
+          console.error(`[capas] ❌ retry ${im.codigo}: ${err instanceof Error ? err.message : err}`);
+          status.set(origIdx, 'error');
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(2, erroredIdxs.length) }, () => retryWorker()));
   }
 
   const gerados = [...status.values()].filter((s) => s === 'ok').length;

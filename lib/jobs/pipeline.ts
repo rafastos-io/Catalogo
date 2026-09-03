@@ -4,6 +4,7 @@ import { gerarCapasImoveis } from '../capas/gerar-capas.js';
 import { gerarFeedFacebook } from '../facebook/gerar-feed.js';
 import { capasConcurrency, feedOutDir } from '../runtime/flags.js';
 import { isPipelineRunning, markEnd, markStart, setPipelineRunning } from './status.js';
+export { isPipelineRunning } from './status.js';
 
 /**
  * Sequência noturna: sync → capas → feed.
@@ -36,6 +37,15 @@ export async function runNightlyPipeline(): Promise<void> {
     console.error('[pipeline] Falhou:', msg);
   } finally {
     setPipelineRunning(false);
+    // Sugere ao V8 que colete o lixo agora (funciona se Node iniciou com --expose-gc).
+    // Libera buffers de fotos, HTML strings e buffers JPEG que ficaram na heap.
+    try {
+      if (typeof (global as Record<string, unknown>).gc === 'function') {
+        (global as Record<string, unknown>).gc as () => void;
+        ((global as Record<string, unknown>).gc as () => void)();
+        console.log('[pipeline] GC forçado após pipeline');
+      }
+    } catch { /* best-effort */ }
   }
 }
 

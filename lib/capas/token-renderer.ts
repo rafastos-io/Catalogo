@@ -1,7 +1,55 @@
 // Port do lib/art/tokenRenderer.ts (MarketCenter) — subset imóvel.
 // Substitui tokens {{...}} no HTML do template imovel-estatico-03.
 
+import { request as httpsRequest } from 'https';
+import { request as httpRequest } from 'http';
 import type { BrandKit } from './brand-kit.js';
+
+// ── Foto em base64 (volátil — sem arquivo em disco) ──────────────────────────
+
+/**
+ * Baixa a foto do imóvel em RAM e devolve um data URI base64.
+ * O Chromium renderiza sem abrir conexões de rede → elimina falhas de networkidle.
+ * Buffer é descartado pelo GC após uso — zero arquivo temporário.
+ */
+export async function fotoParaDataUri(url: string): Promise<string> {
+  if (!url || url.startsWith('data:')) return url;
+  try {
+    const buf = await fetchBuffer(url, 8_000); // timeout 8s
+    // Detecta tipo pela assinatura de bytes (JPEG vs PNG vs WebP)
+    const mime = sniffMime(buf);
+    return `data:${mime};base64,${buf.toString('base64')}`;
+  } catch {
+    // Falha silenciosa: retorna a URL original — Chromium tentará, mas não trava
+    return url;
+  }
+}
+
+function sniffMime(buf: Buffer): string {
+  if (buf[0] === 0xff && buf[1] === 0xd8) return 'image/jpeg';
+  if (buf[0] === 0x89 && buf[1] === 0x50) return 'image/png';
+  if (buf[0] === 0x52 && buf[1] === 0x49) return 'image/webp';
+  return 'image/jpeg';
+}
+
+function fetchBuffer(url: string, timeoutMs: number): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const lib = url.startsWith('https') ? httpsRequest : httpRequest;
+    const req = lib(url, { timeout: timeoutMs }, (res) => {
+      if (res.statusCode && res.statusCode >= 400) {
+        res.resume();
+        return reject(new Error(`HTTP ${res.statusCode}`));
+      }
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+      res.on('error', reject);
+    });
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    req.on('error', reject);
+    req.end();
+  });
+}
 
 export interface ImovelDados {
   codigo: string;

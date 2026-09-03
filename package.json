@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "tsx scripts/server.ts",
+    "start": "node --expose-gc --max-old-space-size=512 node_modules/.bin/tsx scripts/server.ts",
     "sync:imoveis": "tsx scripts/sync-imoveis.ts",
     "feed:facebook": "tsx scripts/gerar-feed-facebook.ts",
     "capas:imoveis": "tsx scripts/gerar-capas-imoveis.ts",
