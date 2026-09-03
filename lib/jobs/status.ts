@@ -53,6 +53,11 @@ export function markEnd(name: JobName, ok: boolean, detail: string): void {
   };
 }
 
+/** Atualiza só o detail enquanto o job roda (progresso no /health). */
+export function setJobDetail(name: JobName, detail: string): void {
+  snapshots[name] = { ...snapshots[name], detail };
+}
+
 export function getStatus() {
   return {
     running: pipelineRunning,

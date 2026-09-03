@@ -10,6 +10,7 @@ import { renderTemplateHtml, fotoParaDataUri, type ImovelDados } from './token-r
 import { screenshotBatch, closeBrowser, type ScreenshotOptions } from './screenshot.js';
 import { uploadPng, capaKey, publicUrlFor, objectExists, deleteObject, closeStorageClient } from './storage.js';
 import { computeContentHash, isCapaUpToDate } from './content-hash.js';
+import { setJobDetail } from '../jobs/status.js';
 
 export interface GerarCapasOptions {
   limit?: number; // se setado, processa só N imóveis (dry-run)
@@ -304,9 +305,12 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
           pushSample(im.codigo, err);
           status.set(i, 'error');
         }
-        const done = [...status.size ? status : new Map()].length;
-        if (done % 50 === 0 || done === items.length) {
-          console.info(`[capas] ${status.size}/${items.length} processados`);
+        const okN = [...status.values()].filter((s) => s === 'ok').length;
+        const errN = [...status.values()].filter((s) => s === 'error').length;
+        if (status.size % 5 === 0 || status.size === items.length) {
+          const detail = `em andamento ${status.size}/${items.length} ok=${okN} erros=${errN}`;
+          console.info(`[capas] ${detail}`);
+          setJobDetail('capas', detail);
         }
       }
     }

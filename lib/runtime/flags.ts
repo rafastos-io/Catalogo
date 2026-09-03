@@ -15,5 +15,6 @@ export function feedOutDir(): string {
 
 export function capasConcurrency(): number {
   const n = Number(process.env.CAPAS_CONCURRENCY);
-  return Number.isFinite(n) && n > 0 ? n : 3;
+  // Default 1: Hostinger SFTP não aguenta uploads paralelos (handshake/auth ban).
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 2) : 1;
 }
