@@ -2,9 +2,10 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { feedOutDir, isSyncDesligado } from '../runtime/flags.js';
-import { getStatus } from '../jobs/status.js';
+import { getStatus, requestCancel } from '../jobs/status.js';
 import { isPipelineRunning, runNightlyPipeline } from '../jobs/pipeline.js';
 import { previewRevision, renderPreviewPage } from '../capas/preview-page.js';
+import { probeSftp } from '../capas/storage.js';
 
 function send(res: ServerResponse, status: number, body: string, type: string): void {
   res.writeHead(status, {
@@ -20,6 +21,20 @@ function json(res: ServerResponse, status: number, data: unknown): void {
 
 function parseQuery(url: string): URL {
   return new URL(url, 'http://localhost');
+}
+
+function requireTriggerToken(u: URL, res: ServerResponse): boolean {
+  const secret = process.env.PIPELINE_TRIGGER_TOKEN?.trim();
+  if (!secret) {
+    json(res, 503, { ok: false, error: 'PIPELINE_TRIGGER_TOKEN não configurado' });
+    return false;
+  }
+  const token = u.searchParams.get('token') ?? '';
+  if (token !== secret) {
+    json(res, 401, { ok: false, error: 'token inválido' });
+    return false;
+  }
+  return true;
 }
 
 function serveFeedFile(res: ServerResponse, fileName: string, type: string): void {
@@ -76,27 +91,39 @@ async function handleProduction(req: IncomingMessage, res: ServerResponse): Prom
   }
 
   // ── Trigger manual do pipeline ──────────────────────────────────────────────
-  // POST /trigger?token=<PIPELINE_TRIGGER_TOKEN>
-  // Inicia o pipeline noturno fora do cron. Responde imediatamente (202) e
-  // roda em background — acompanhe via GET /health.
   if (u.pathname === '/trigger' && req.method === 'POST') {
-    const secret = process.env.PIPELINE_TRIGGER_TOKEN?.trim();
-    if (!secret) {
-      json(res, 503, { ok: false, error: 'PIPELINE_TRIGGER_TOKEN não configurado' });
-      return;
-    }
-    const token = u.searchParams.get('token') ?? '';
-    if (token !== secret) {
-      json(res, 401, { ok: false, error: 'token inválido' });
-      return;
-    }
+    if (!requireTriggerToken(u, res)) return;
     if (isPipelineRunning()) {
       json(res, 409, { ok: false, error: 'pipeline já em andamento', ...getStatus() });
       return;
     }
-    // Dispara em background — não await
     void runNightlyPipeline();
     json(res, 202, { ok: true, message: 'pipeline iniciado — acompanhe em /health' });
+    return;
+  }
+
+  // ── Cancelar pipeline em andamento ─────────────────────────────────────────
+  if (u.pathname === '/cancel' && req.method === 'POST') {
+    if (!requireTriggerToken(u, res)) return;
+    if (!isPipelineRunning()) {
+      json(res, 200, { ok: true, message: 'nada rodando', ...getStatus() });
+      return;
+    }
+    requestCancel('POST /cancel');
+    json(res, 202, { ok: true, message: 'cancelamento solicitado — workers param no próximo item', ...getStatus() });
+    return;
+  }
+
+  // ── Teste SFTP (credenciais Hostinger) ─────────────────────────────────────
+  // GET /sftp-test?token=... — conecta, lista, sobe e apaga um arquivo minúsculo.
+  if (u.pathname === '/sftp-test' && (req.method === 'GET' || req.method === 'POST')) {
+    if (!requireTriggerToken(u, res)) return;
+    if (isPipelineRunning()) {
+      json(res, 409, { ok: false, error: 'pipeline em andamento — teste SFTP depois' });
+      return;
+    }
+    const result = await probeSftp();
+    json(res, result.ok ? 200 : 503, result);
     return;
   }
 

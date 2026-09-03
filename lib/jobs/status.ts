@@ -24,6 +24,7 @@ const snapshots: Record<JobName, JobSnapshot> = {
 };
 
 let pipelineRunning = false;
+let cancelRequested = false;
 
 export function isPipelineRunning(): boolean {
   return pipelineRunning;
@@ -31,6 +32,21 @@ export function isPipelineRunning(): boolean {
 
 export function setPipelineRunning(v: boolean): void {
   pipelineRunning = v;
+}
+
+export function requestCancel(reason = 'cancelamento manual'): void {
+  cancelRequested = true;
+  if (pipelineRunning) {
+    setJobDetail('pipeline', `cancelando: ${reason}`);
+  }
+}
+
+export function clearCancel(): void {
+  cancelRequested = false;
+}
+
+export function isCancelRequested(): boolean {
+  return cancelRequested;
 }
 
 export function markStart(name: JobName): void {
@@ -61,6 +77,7 @@ export function setJobDetail(name: JobName, detail: string): void {
 export function getStatus() {
   return {
     running: pipelineRunning,
+    cancelRequested,
     jobs: snapshots,
   };
 }

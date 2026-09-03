@@ -10,7 +10,7 @@ import { renderTemplateHtml, fotoParaDataUri, type ImovelDados } from './token-r
 import { screenshotBatch, closeBrowser, type ScreenshotOptions } from './screenshot.js';
 import { uploadPng, capaKey, publicUrlFor, objectExists, deleteObject, closeStorageClient } from './storage.js';
 import { computeContentHash, isCapaUpToDate } from './content-hash.js';
-import { setJobDetail } from '../jobs/status.js';
+import { isCancelRequested, setJobDetail } from '../jobs/status.js';
 
 export interface GerarCapasOptions {
   limit?: number; // se setado, processa só N imóveis (dry-run)
@@ -225,6 +225,13 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
 
   const status = new Map<number, 'ok' | 'error'>();
   const sampleErrors: string[] = [];
+  let consecutiveSftpFails = 0;
+  const SFTP_FAIL_FAST = 5;
+
+  const isSftpError = (err: unknown): boolean => {
+    const msg = err instanceof Error ? err.message : String(err);
+    return /getConnection|handshake|authentication methods|SFTP op timeout|ECONNRESET|ECONNREFUSED|ETIMEDOUT/i.test(msg);
+  };
 
   const pushSample = (codigo: string, err: unknown) => {
     if (sampleErrors.length >= 5) return;
@@ -288,42 +295,67 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
     return result.png;
   }
 
-  // Passo 1: render + upload em paralelo (concurrency limitada).
+  // Passo 1: render + upload. Fail-fast se SFTP cair N vezes seguidas.
   {
     let cursor = 0;
+    let abortSftp = false;
     async function worker() {
       while (true) {
+        if (isCancelRequested() || abortSftp) return;
         const i = cursor++;
         if (i >= items.length) return;
         const im = items[i].imovel;
         try {
           const img = await renderItem(im);
+          if (isCancelRequested() || abortSftp) {
+            status.set(i, 'error');
+            pushSample(im.codigo, new Error('abortado'));
+            return;
+          }
           await processUpload(im, img);
           status.set(i, 'ok');
+          consecutiveSftpFails = 0;
         } catch (err) {
           console.error(`[capas] ❌ render ${im.codigo}: ${err instanceof Error ? err.message : err}`);
           pushSample(im.codigo, err);
           status.set(i, 'error');
+          if (isSftpError(err)) {
+            consecutiveSftpFails++;
+            if (consecutiveSftpFails >= SFTP_FAIL_FAST) {
+              abortSftp = true;
+              console.error(`[capas] FAIL-FAST: ${SFTP_FAIL_FAST} falhas SFTP seguidas — abortando o resto`);
+              setJobDetail('capas', `abortado: SFTP falhou ${SFTP_FAIL_FAST}x seguidas`);
+            }
+          } else {
+            consecutiveSftpFails = 0;
+          }
         }
         const okN = [...status.values()].filter((s) => s === 'ok').length;
         const errN = [...status.values()].filter((s) => s === 'error').length;
-        if (status.size % 5 === 0 || status.size === items.length) {
+        if (status.size % 5 === 0 || status.size === items.length || abortSftp) {
           const detail = `em andamento ${status.size}/${items.length} ok=${okN} erros=${errN}`;
           console.info(`[capas] ${detail}`);
-          setJobDetail('capas', detail);
+          setJobDetail('capas', abortSftp ? `${detail} | FAIL-FAST SFTP` : detail);
         }
       }
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
   }
 
-  // Passo 2: retry dos que falharam, com concurrency baixa (mais resiliente).
+  // Passo 2: retry só se houve algum sucesso (SFTP provavelmente ok).
+  // Se 0 ok e só erro SFTP, retry só alonga o sofrimento.
   const erroredIdxs = [...status.entries()].filter(([, s]) => s === 'error').map(([i]) => i);
-  if (erroredIdxs.length > 0) {
-    console.info(`[capas] Retry: ${erroredIdxs.length} capas com erro, retentando (concurrency=2)...`);
+  const okSoFar = [...status.values()].filter((s) => s === 'ok').length;
+  const skipRetry =
+    isCancelRequested() ||
+    okSoFar === 0 ||
+    consecutiveSftpFails >= SFTP_FAIL_FAST;
+  if (erroredIdxs.length > 0 && !skipRetry) {
+    console.info(`[capas] Retry: ${erroredIdxs.length} capas com erro, retentando (concurrency=1)...`);
     let retryCursor = 0;
     async function retryWorker() {
       while (true) {
+        if (isCancelRequested()) return;
         const j = retryCursor++;
         if (j >= erroredIdxs.length) return;
         const origIdx = erroredIdxs[j];
@@ -336,10 +368,19 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
           console.error(`[capas] ❌ retry ${im.codigo}: ${err instanceof Error ? err.message : err}`);
           pushSample(im.codigo, err);
           status.set(origIdx, 'error');
+          if (isSftpError(err)) {
+            consecutiveSftpFails++;
+            if (consecutiveSftpFails >= SFTP_FAIL_FAST) {
+              console.error('[capas] FAIL-FAST no retry — parando');
+              return;
+            }
+          }
         }
       }
     }
-    await Promise.all(Array.from({ length: Math.min(2, erroredIdxs.length) }, () => retryWorker()));
+    await Promise.all(Array.from({ length: Math.min(1, erroredIdxs.length) }, () => retryWorker()));
+  } else if (erroredIdxs.length > 0 && skipRetry) {
+    console.warn(`[capas] Retry pulado (ok=${okSoFar}, cancel=${isCancelRequested()}, sftpFails=${consecutiveSftpFails})`);
   }
 
   const gerados = [...status.values()].filter((s) => s === 'ok').length;

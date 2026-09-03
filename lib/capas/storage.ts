@@ -291,3 +291,47 @@ export function closeStorageClient(): void {
     }
   }
 }
+
+/**
+ * Teste rápido de credenciais SFTP: conecta → sobe arquivo minúsculo → apaga.
+ * Não lista o diretório inteiro (pode ter 10k+ capas).
+ */
+export async function probeSftp(): Promise<{
+  ok: boolean;
+  host: string;
+  port: number;
+  user: string;
+  remoteDir: string;
+  uploaded: boolean;
+  deleted: boolean;
+  error?: string;
+  ms: number;
+}> {
+  const started = Date.now();
+  const cfg = getConfigFromEnv();
+  const base = {
+    host: cfg.sftpHost,
+    port: cfg.sftpPort,
+    user: cfg.sftpUser,
+    remoteDir: cfg.remoteDir,
+    uploaded: false,
+    deleted: false,
+  };
+  try {
+    const probeKey = `__probe_${Date.now()}.txt`;
+    await uploadBuffer(probeKey, Buffer.from(`probe ${new Date().toISOString()}\n`), 'text/plain');
+    base.uploaded = true;
+    await deleteObject(probeKey);
+    base.deleted = true;
+    closeStorageClient();
+    return { ok: true, ...base, ms: Date.now() - started };
+  } catch (err) {
+    closeStorageClient();
+    return {
+      ok: false,
+      ...base,
+      error: err instanceof Error ? err.message : String(err),
+      ms: Date.now() - started,
+    };
+  }
+}

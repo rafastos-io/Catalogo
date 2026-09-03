@@ -3,8 +3,8 @@ import { syncImoveisFromXML } from '../sync/xml-imoveis.js';
 import { gerarCapasImoveis } from '../capas/gerar-capas.js';
 import { gerarFeedFacebook } from '../facebook/gerar-feed.js';
 import { capasConcurrency, feedOutDir } from '../runtime/flags.js';
-import { getStatus, isPipelineRunning, markEnd, markStart, setPipelineRunning } from './status.js';
-export { isPipelineRunning } from './status.js';
+import { getStatus, isCancelRequested, clearCancel, isPipelineRunning, markEnd, markStart, setPipelineRunning } from './status.js';
+export { isPipelineRunning, requestCancel } from './status.js';
 
 /**
  * Sequência noturna: sync → capas → feed.
@@ -17,6 +17,7 @@ export async function runNightlyPipeline(): Promise<void> {
     return;
   }
 
+  clearCancel();
   setPipelineRunning(true);
   markStart('pipeline');
   const started = Date.now();
@@ -25,23 +26,26 @@ export async function runNightlyPipeline(): Promise<void> {
   );
 
   try {
-    await runIsolated('sync', runSync);
-    await runIsolated('capas', runCapas);
-    await runIsolated('feed', runFeed);
+    if (!isCancelRequested()) await runIsolated('sync', runSync);
+    if (!isCancelRequested()) await runIsolated('capas', runCapas);
+    if (!isCancelRequested()) await runIsolated('feed', runFeed);
     const sec = ((Date.now() - started) / 1000).toFixed(1);
-    markEnd('pipeline', true, `ok em ${sec}s`);
-    console.log(`[pipeline] Concluído em ${sec}s`);
+    if (isCancelRequested()) {
+      markEnd('pipeline', false, `cancelado após ${sec}s`);
+      console.warn(`[pipeline] Cancelado após ${sec}s`);
+    } else {
+      markEnd('pipeline', true, `ok em ${sec}s`);
+      console.log(`[pipeline] Concluído em ${sec}s`);
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     markEnd('pipeline', false, msg);
     console.error('[pipeline] Falhou:', msg);
   } finally {
     setPipelineRunning(false);
-    // Sugere ao V8 que colete o lixo agora (funciona se Node iniciou com --expose-gc).
-    // Libera buffers de fotos, HTML strings e buffers JPEG que ficaram na heap.
+    clearCancel();
     try {
       if (typeof (global as Record<string, unknown>).gc === 'function') {
-        (global as Record<string, unknown>).gc as () => void;
         ((global as Record<string, unknown>).gc as () => void)();
         console.log('[pipeline] GC forçado após pipeline');
       }
