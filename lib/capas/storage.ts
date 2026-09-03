@@ -24,12 +24,16 @@ export interface StorageConfig {
   poolSize: number; // numero de conexoes SFTP concorrentes
 }
 
-const DEFAULT_POOL_SIZE = 5;
+// Hostinger derruba handshake se várias conexões SSH abrem juntas
+// ("Connection lost before handshake"). Pool pequeno + handshake serial.
+const DEFAULT_POOL_SIZE = 2;
 
 let _pool: Array<Client | null> = [];
 let _poolReady: Array<Promise<Client | null>> = [];
+let _slotLocks: Array<Promise<void>> = [];
 let _poolInitStarted = false;
 let _rrIndex = 0; // round-robin index
+let _handshakeQueue: Promise<void> = Promise.resolve();
 
 function getConfigFromEnv(): StorageConfig {
   const sftpHost = process.env.STORAGE_SFTP_HOST;
@@ -46,7 +50,8 @@ function getConfigFromEnv(): StorageConfig {
   const sftpPort = sftpPortRaw ? parseInt(sftpPortRaw, 10) : 65002; // porta SFTP/SSH padrao da Hostinger
   if (isNaN(sftpPort)) throw new Error('STORAGE_SFTP_PORT invalido');
   const poolSizeRaw = process.env.STORAGE_POOL_SIZE;
-  const poolSize = poolSizeRaw ? Math.max(1, parseInt(poolSizeRaw, 10)) : DEFAULT_POOL_SIZE;
+  const requested = poolSizeRaw ? Math.max(1, parseInt(poolSizeRaw, 10)) : DEFAULT_POOL_SIZE;
+  const poolSize = Math.min(2, requested || DEFAULT_POOL_SIZE);
   return { sftpHost, sftpPort, sftpUser, sftpPass, publicUrl, remoteDir, poolSize };
 }
 
@@ -55,18 +60,32 @@ function buildClient(cfg: StorageConfig): Client {
   return c;
 }
 
+function withHandshakeLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = _handshakeQueue.then(fn, fn);
+  _handshakeQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 async function connectClient(c: Client, cfg: StorageConfig): Promise<Client> {
-  await c.connect({
-    host: cfg.sftpHost,
-    port: cfg.sftpPort,
-    username: cfg.sftpUser,
-    password: cfg.sftpPass,
-    readyTimeout: 30_000,
-    algorithms: {
-      serverHostKey: ['ssh-rsa', 'ssh-ed25519', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'],
-    },
+  return withHandshakeLock(async () => {
+    await sleep(250);
+    await c.connect({
+      host: cfg.sftpHost,
+      port: cfg.sftpPort,
+      username: cfg.sftpUser,
+      password: cfg.sftpPass,
+      readyTimeout: 45_000,
+      keepaliveInterval: 15_000,
+      keepaliveCountMax: 4,
+      algorithms: {
+        serverHostKey: ['ssh-rsa', 'ssh-ed25519', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521'],
+      },
+    });
+    return c;
   });
-  return c;
 }
 
 /** Inicializa (ou tenta) um slot do pool. Retorna Client ou null se falhar. */
@@ -94,10 +113,12 @@ async function ensurePool(): Promise<void> {
   const size = Math.max(1, cfg.poolSize);
   _pool = new Array<Client | null>(size).fill(null);
   _poolReady = new Array<Promise<Client | null>>(size);
+  _slotLocks = Array.from({ length: size }, () => Promise.resolve());
+  // Sequencial: 5 handshakes paralelos na Hostinger = Connection lost.
   for (let i = 0; i < size; i++) {
     _poolReady[i] = initSlot(i, cfg);
+    await _poolReady[i];
   }
-  await Promise.allSettled(_poolReady);
 }
 
 /**
@@ -105,22 +126,33 @@ async function ensurePool(): Promise<void> {
  * de forma lazy. Se todo o pool falhar, cria conexao ad-hoc. Nunca retorna
  * undefined — retorna Client conectado ou lanca.
  */
-async function getClient(): Promise<Client> {
+async function getClient(): Promise<{ client: Client; slot: number }> {
   await ensurePool();
   const size = _pool.length;
   const cfg = getConfigFromEnv();
   if (size === 0) {
-    return connectClient(buildClient(cfg), cfg);
+    return { client: await connectClient(buildClient(cfg), cfg), slot: -1 };
   }
   for (let attempt = 0; attempt < size; attempt++) {
     const i = _rrIndex;
     _rrIndex = (_rrIndex + 1) % size;
     const c = _pool[i];
-    if (c) return c;
+    if (c) return { client: c, slot: i };
     const reconnected = await initSlot(i, cfg);
-    if (reconnected) return reconnected;
+    if (reconnected) return { client: reconnected, slot: i };
   }
-  return connectClient(buildClient(cfg), cfg);
+  return { client: await connectClient(buildClient(cfg), cfg), slot: -1 };
+}
+
+function withSlotLock<T>(slot: number, fn: () => Promise<T>): Promise<T> {
+  if (slot < 0) return fn();
+  if (!_slotLocks[slot]) _slotLocks[slot] = Promise.resolve();
+  const run = _slotLocks[slot].then(fn, fn);
+  _slotLocks[slot] = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -149,7 +181,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 /** True se o erro indicar problema de conexao/transiente. */
 function isTransientError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE|EHOSTUNREACH|ENETUNREACH|handshake|Connection lost|socket hang up|read ECONN|write ECONN|Network Error|aborted|SFTP op timeout/i.test(msg);
+  return /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EPIPE|EHOSTUNREACH|ENETUNREACH|handshake|Connection lost|getConnection|socket hang up|read ECONN|write ECONN|Network Error|aborted|SFTP op timeout/i.test(msg);
 }
 
 /**
@@ -157,30 +189,32 @@ function isTransientError(err: unknown): boolean {
  * mid-op, descarta-a do pool, pega outra e tenta de novo (ate 4x com backoff).
  */
 async function withClientRetry<T>(op: (c: Client) => Promise<T>): Promise<T> {
-  const MAX_ATTEMPTS = 4;
+  const MAX_ATTEMPTS = 6;
   let lastErr: unknown;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    let c: Client;
+    let got: { client: Client; slot: number };
     try {
-      c = await getClient();
+      got = await getClient();
     } catch (err) {
       lastErr = err;
-      if (attempt < MAX_ATTEMPTS - 1) await sleep(400 * (attempt + 1));
+      if (attempt < MAX_ATTEMPTS - 1) await sleep(800 * (attempt + 1));
       continue;
     }
     try {
-      return await withTimeout(op(c), OP_TIMEOUT_MS, `attempt ${attempt + 1}`);
+      return await withSlotLock(got.slot, () =>
+        withTimeout(op(got.client), OP_TIMEOUT_MS, `attempt ${attempt + 1}`),
+      );
     } catch (err) {
       lastErr = err;
-      const idx = _pool.indexOf(c);
+      const idx = got.slot >= 0 ? got.slot : _pool.indexOf(got.client);
       if (idx >= 0) _pool[idx] = null;
       try {
-        await c.end();
+        await got.client.end();
       } catch {
         // best-effort
       }
       if (attempt < MAX_ATTEMPTS - 1) {
-        const delay = isTransientError(err) ? 400 * (attempt + 1) : 1000 * (attempt + 1);
+        const delay = isTransientError(err) ? 800 * (attempt + 1) : 1500 * (attempt + 1);
         await sleep(delay);
       }
     }
@@ -353,7 +387,9 @@ export function closeStorageClient(): void {
   }
   _pool = [];
   _poolReady = [];
+  _slotLocks = [];
   _poolInitStarted = false;
   _rrIndex = 0;
+  _handshakeQueue = Promise.resolve();
   _ensuredDirs.clear();
 }
