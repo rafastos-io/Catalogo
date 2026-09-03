@@ -3,7 +3,7 @@ import { syncImoveisFromXML } from '../sync/xml-imoveis.js';
 import { gerarCapasImoveis } from '../capas/gerar-capas.js';
 import { gerarFeedFacebook } from '../facebook/gerar-feed.js';
 import { capasConcurrency, feedOutDir } from '../runtime/flags.js';
-import { isPipelineRunning, markEnd, markStart, setPipelineRunning } from './status.js';
+import { getStatus, isPipelineRunning, markEnd, markStart, setPipelineRunning } from './status.js';
 export { isPipelineRunning } from './status.js';
 
 /**
@@ -98,18 +98,23 @@ async function runCapas(): Promise<void> {
   const concurrency = capasConcurrency();
   try {
     const r = await gerarCapasImoveis({ concurrency });
-    const detail = `gerados=${r.gerados} skip=${r.skippados} erros=${r.erros}`;
+    const sample = r.sampleErrors?.length ? ` | ex: ${r.sampleErrors.slice(0, 2).join(' · ')}` : '';
+    const detail = `gerados=${r.gerados} skip=${r.skippados} erros=${r.erros}${sample}`;
     const tentados = r.gerados + r.erros;
     const errorRate = tentados > 0 ? r.erros / tentados : 0;
     if (errorRate > 0.05) {
       markEnd('capas', false, detail);
-      throw new Error(`Taxa de erro das capas ${(errorRate * 100).toFixed(1)}% > 5%`);
+      throw new Error(detail);
     }
     markEnd('capas', true, detail);
     console.log(`[capas] ${detail} concurrency=${concurrency}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    markEnd('capas', false, msg);
+    // Só sobrescreve se ainda não tiver contagem (ex.: crash antes do return)
+    const prev = getStatus().jobs.capas;
+    if (!prev.detail.startsWith('gerados=')) {
+      markEnd('capas', false, msg);
+    }
     throw err;
   }
 }

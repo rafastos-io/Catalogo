@@ -25,6 +25,8 @@ export interface GerarCapasResult {
   skippados: number;
   erros: number;
   durationMs: number;
+  /** Amostra de mensagens de erro (pra /health e logs). */
+  sampleErrors?: string[];
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -221,6 +223,13 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
   }
 
   const status = new Map<number, 'ok' | 'error'>();
+  const sampleErrors: string[] = [];
+
+  const pushSample = (codigo: string, err: unknown) => {
+    if (sampleErrors.length >= 5) return;
+    const msg = err instanceof Error ? err.message : String(err);
+    sampleErrors.push(`${codigo}: ${msg.slice(0, 120)}`);
+  };
 
   // Upload + registro no banco + cleanup da versão antiga. Lança em caso de erro.
   const processUpload = async (im: ImovelRow, img: Buffer): Promise<void> => {
@@ -292,6 +301,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
           status.set(i, 'ok');
         } catch (err) {
           console.error(`[capas] ❌ render ${im.codigo}: ${err instanceof Error ? err.message : err}`);
+          pushSample(im.codigo, err);
           status.set(i, 'error');
         }
         const done = [...status.size ? status : new Map()].length;
@@ -320,6 +330,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
           status.set(origIdx, 'ok');
         } catch (err) {
           console.error(`[capas] ❌ retry ${im.codigo}: ${err instanceof Error ? err.message : err}`);
+          pushSample(im.codigo, err);
           status.set(origIdx, 'error');
         }
       }
@@ -347,5 +358,5 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
   console.info(`[capas]   Erros:      ${erros}`);
   console.info(`[capas]   Total catálogo: ${imoveis.length}`);
 
-  return { total: imoveis.length, gerados, skippados, erros, durationMs };
+  return { total: imoveis.length, gerados, skippados, erros, durationMs, sampleErrors };
 }

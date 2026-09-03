@@ -106,14 +106,31 @@ async function screenshotHtmlOnce(html: string, opts: ScreenshotOptions): Promis
       height: opts.height,
       deviceScaleFactor: 1,
     });
+
+    // Foto/logo já vêm em data URI. Bloqueia Google Fonts e qualquer fetch
+    // externo — networkidle0 + fonts.googleapis travava 100% dos renders na VPS.
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      const u = req.url();
+      if (u.startsWith('data:') || u.startsWith('blob:') || u === 'about:blank') {
+        void req.continue();
+        return;
+      }
+      // setContent usa um documento interno; deixa o documento principal passar
+      if (req.resourceType() === 'document') {
+        void req.continue();
+        return;
+      }
+      void req.abort();
+    });
+
     await page.setContent(html, {
-      waitUntil: 'networkidle0', // espera fonts e imagens carregarem
-      timeout: 45_000,
+      waitUntil: 'domcontentloaded',
+      timeout: 15_000,
     });
-    // Dá um tempinho pra fonts Google carregarem após networkidle
-    await page.evaluate(() => {
-      return (document as any).fonts?.ready ?? Promise.resolve();
-    });
+    // Fonte do sistema (Montserrat pode não carregar — fallback sans-serif ok)
+    await page.evaluate(() => new Promise<void>((r) => setTimeout(r, 50)));
+
     const buf = await page.screenshot({
       type: 'jpeg',
       quality: 85,
