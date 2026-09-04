@@ -230,7 +230,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
 
   const isSftpError = (err: unknown): boolean => {
     const msg = err instanceof Error ? err.message : String(err);
-    return /getConnection|handshake|authentication methods|SFTP op timeout|ECONNRESET|ECONNREFUSED|ETIMEDOUT/i.test(msg);
+    return /getConnection|handshake|authentication|Authentication failed|530|Login incorrect|FTP op timeout|SFTP op timeout|ECONNRESET|ECONNREFUSED|ETIMEDOUT/i.test(msg);
   };
 
   const pushSample = (codigo: string, err: unknown) => {
