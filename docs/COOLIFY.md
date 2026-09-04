@@ -11,7 +11,7 @@ App: **Facebook / production / Catalogo**. Não recriar.
 | Domínio | `https://catalogo.grupourban.cloud` (porta interna **3000**) |
 | Health | `GET /health` (inclui progresso das capas e `cancelRequested`) |
 | Feed | `/facebook-home-listings.xml` e `.csv` |
-| Cron | **01:00 BRT** sync → capas → feed |
+| Cron | **01:00 e 12:00 BRT** — sync → capas → feed (pipeline completo) |
 | Trigger | `POST /trigger?token=$PIPELINE_TRIGGER_TOKEN` |
 | Cancel | `POST /cancel?token=…` |
 | Teste storage | `GET /sftp-test?token=…` (FTPS probe) |
@@ -21,6 +21,13 @@ App: **Facebook / production / Catalogo**. Não recriar.
 | Concurrency | `CAPAS_CONCURRENCY=1` |
 
 Custom Docker options (General → Runtime): `--shm-size=1g`
+
+### Por que 01:00 e 12:00?
+
+1. **01:00 BRT** — atualiza Turso/capas/feed **antes** do Meta puxar às 04:00.  
+2. **12:00 BRT** — a mídia Gaia (`IMOVEIS_XML_URL`) costuma atrasar horas em relação ao Kenlo / “Histórico de cargas”; o meio-dia pega imóveis que entraram no XML de manhã.
+
+Cada janela dispara **uma vez** (`ymd@hora`). Se o pipeline da 01h ainda estiver rodando às 12h, o segundo disparo é ignorado (`pipeline já em andamento`) — raro, jobs costumam fechar em minutos.
 
 ### Env storage (Hostinger)
 
@@ -45,7 +52,7 @@ Evite colar **Show Debug Logs** em chats: o Coolify injeta secrets como `ARG` e 
 - URL: `https://catalogo-pr-{{pr_id}}.grupourban.cloud`
 - Env: `SYNC_DESLIGADO=1` + Turso (sem storage de escrita)
 - Capa: `/?codigo=AP0221` — só leitura
-- Merge em `main` publica o código; **JPG novo no Hostinger** na rodada 01:00 ou via `/trigger`
+- Merge em `main` publica o código; **JPG novo no Hostinger** nas rodadas 01:00 / 12:00 ou via `/trigger`
 
 ## GitHub Actions
 

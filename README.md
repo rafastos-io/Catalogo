@@ -3,12 +3,12 @@
 Sync incremental do feed XML de imóveis para o **Turso**, geração de capas JPG e feed Facebook Home Listings.
 
 **Produção:** VPS Coolify — `https://catalogo.grupourban.cloud` (`npm start`).  
-Cron interno **01:00 BRT**: sync → capas → feed. O Meta puxa o XML às **04:00**.
+Crons internos **01:00 e 12:00 BRT**: sync → capas → feed. O Meta puxa o XML às **04:00**.
 
 O **GitHub não executa mais o catálogo.** O repo só guarda o código. Push em `main` → Coolify publica na VPS. Preview de PR → `catalogo-pr-{n}.grupourban.cloud` (capas visuais, sem gravar).
 
 ```
-XML Gaia/Kenlo  →  VPS 01:00 BRT  →  Turso
+XML Gaia/Kenlo  →  VPS 01:00 e 12:00 BRT  →  Turso
                       │
                       ├─ capas → FTPS Hostinger (porta 21) → capas.grupourban.app
                       └─ feed  → catalogo.grupourban.cloud
@@ -26,7 +26,7 @@ Docs: [`docs/COOLIFY.md`](docs/COOLIFY.md) · [`docs/PREVIEW-E-SYNC.md`](docs/PR
 3. Abrir UM PR → Coolify sobe preview (SYNC_DESLIGADO=1)
    → https://catalogo-pr-{n}.grupourban.cloud/?codigo=AP0221
 4. Merge em main → produção atualiza
-5. Capas novas no storage saem na rodada das 01:00 (ou via POST /trigger)
+5. Capas novas no storage saem nas rodadas 01:00 / 12:00 (ou via POST /trigger)
 ```
 
 **Env nova no Coolify:** em geral basta **Restart**. **Deploy** completo só quando muda código/Dockerfile (rebuild demora por causa do Chromium).
@@ -35,7 +35,7 @@ Docs: [`docs/COOLIFY.md`](docs/COOLIFY.md) · [`docs/PREVIEW-E-SYNC.md`](docs/PR
 
 | Arquivo | Papel |
 |---|---|
-| `scripts/server.ts` | Processo Coolify: HTTP + cron 01:00 |
+| `scripts/server.ts` | Processo Coolify: HTTP + cron 01:00 e 12:00 BRT |
 | `lib/sync/xml-imoveis.ts` | Fetch XML, diff incremental, upsert |
 | `lib/facebook/gerar-feed.ts` | CSV + XML Home Listings |
 | `lib/capas/gerar-capas.ts` | JPG → FTPS Hostinger (incremental + fail-fast) |
@@ -99,6 +99,16 @@ FileZilla (teste manual): Host `ftp://IP` ou `sftp://` só se for SSH; para esta
 - **Fail-fast:** 5 erros de storage seguidos → aborta (não fica horas em retry)  
 - Progresso no `/health`: `em andamento X/Y ok=… erros=…`
 
+## Cron e atraso do XML Gaia
+
+A mídia `GaiaWebServiceImovel` (`IMOVEIS_XML_URL`) **atrasa** em relação ao Kenlo IMOB e ao “Histórico de cargas”:
+
+- Imóvel **Ativo** no painel Kenlo ≠ necessariamente no XML na mesma hora  
+- A carga automática (ex. 22:05) pode aparecer na URL do midia só horas depois  
+- Por isso há **dois** pipelines/dia: **01:00** (antes do Meta 04:00) e **12:00** (pega o que entrou de manhã)
+
+O sync só enxerga o que a URL entrega naquele momento. Contagem Kenlo “ativados ontem” pode incluir códigos que **nunca** vão para essa mídia.
+
 ## Scripts npm
 
 | Script | O que faz |
@@ -119,6 +129,5 @@ A branch GitHub `feed` é legado e **não** alimenta mais o Meta.
 
 ## Notas
 
-- O histórico de cargas da Gaia (“Anúncios”) pode diferir do XML da mídia `GaiaWebServiceImovel` que consumimos — o sync só vê o que `IMOVEIS_XML_URL` entrega.  
 - Captação no CRM ≠ imóvel novo no XML.  
 - `fotos_urls` no Turso é JSON em TEXT; booleanos são INTEGER 0/1.
