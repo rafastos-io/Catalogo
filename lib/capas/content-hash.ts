@@ -34,9 +34,13 @@ function serializeImovelForHash(im: ImovelDados): string {
   ].join('|');
 }
 
-/** Retorna hash SHA-256 hex de 16 chars (64 bits — suficiente pra evitar colisoes). */
-export function computeContentHash(im: ImovelDados): string {
-  const serialized = serializeImovelForHash(im);
+/**
+ * Hash SHA-256 hex de 16 chars.
+ * `artFingerprint` entra a arte (HTML + formato): mudar o template invalida
+ * todas as capas no próximo incremental, sem precisar de --force.
+ */
+export function computeContentHash(im: ImovelDados, artFingerprint = ''): string {
+  const serialized = [serializeImovelForHash(im), artFingerprint].join('|');
   return createHash('sha256').update(serialized).digest('hex').slice(0, 16);
 }
 

@@ -18,3 +18,9 @@ export function capasConcurrency(): number {
   // Default 1: Hostinger SFTP não aguenta uploads paralelos (handshake/auth ban).
   return Number.isFinite(n) && n > 0 ? Math.min(n, 2) : 1;
 }
+
+/** Formato do JPG de capa. A arte nova é 4:5. */
+export function capasFormato(): string {
+  const v = process.env.CAPAS_FORMATO?.trim();
+  return v || '1080x1350';
+}
