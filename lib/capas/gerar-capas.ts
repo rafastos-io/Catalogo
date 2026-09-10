@@ -1,6 +1,7 @@
 // Orquestrador: le Turso, decide incremental, gera JPG, sobe via SFTP,
 // atualiza capas_imoveis. Reaproveita browser e client SFTP entre os imoveis.
 
+import { createHash } from 'crypto';
 import { createClient, type Client } from '@libsql/client';
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
@@ -15,7 +16,7 @@ import { isCancelRequested, setJobDetail } from '../jobs/status.js';
 export interface GerarCapasOptions {
   limit?: number; // se setado, processa só N imóveis (dry-run)
   concurrency?: number; // padrão 10
-  formato?: string; // padrão '1080x1080'
+  formato?: string; // padrão '1080x1350'
   templateSlug?: string; // padrão 'imovel-estatico-03'
   force?: boolean; // se true, ignora incremental e regera tudo
 }
@@ -51,7 +52,7 @@ interface ImovelRow extends ImovelDados {
 
 export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<GerarCapasResult> {
   const start = Date.now();
-  const formato = opts.formato ?? '1080x1080';
+  const formato = opts.formato ?? '1080x1350';
   const templateSlug = opts.templateSlug ?? 'imovel-estatico-03';
   const concurrency = opts.concurrency ?? 10;
   const force = opts.force ?? false;
@@ -65,6 +66,8 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
   // Template HTML
   console.info(`[capas] Carregando template ${templateSlug} (formato ${formato})...`);
   const templateHtml = loadTemplateHtml(templateSlug);
+  const artFingerprint = createHash('sha256').update(`${formato}\n${templateHtml}`).digest('hex');
+  const hashOf = (im: ImovelDados) => computeContentHash(im, artFingerprint);
 
   // Logo → data URI (1 download, reaproveitado em todos os renders)
   console.info('[capas] Baixando logo e convertendo pra data URI...');
@@ -129,7 +132,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
     let upToDate = 0;
     for (const im of imoveis) {
       const existing = capasMap.get(im.codigo.toUpperCase());
-      const currentHash = computeContentHash(im);
+      const currentHash = hashOf(im);
       const expectedUrl = publicUrlFor(capaKey(im.codigo, currentHash));
       if (isCapaUpToDate({ currentHash, expectedUrl, dbHash: existing?.contentHash ?? null, dbUrl: existing?.capaUrl ?? null })) {
         upToDate++;
@@ -150,7 +153,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
         if (i >= candidates.length) return;
         const im = candidates[i];
         try {
-          const exists = await objectExists(capaKey(im.codigo, computeContentHash(im)));
+          const exists = await objectExists(capaKey(im.codigo, hashOf(im)));
           if (exists) skipExistentes.push(im);
           else needRender.push(im);
         } catch {
@@ -165,7 +168,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
     }
     // Pra quem ja tem o arquivo no storage mas o registro estava defasado, corrige o banco.
     for (const im of skipExistentes) {
-      const currentHash = computeContentHash(im);
+      const currentHash = hashOf(im);
       const capaUrl = publicUrlFor(capaKey(im.codigo, currentHash));
       await turso.execute({
         sql: `INSERT INTO capas_imoveis (codigo, capa_url, ultima_atualizacao_gerada, content_hash, gerado_em) VALUES (?, ?, ?, ?, ?) ON CONFLICT(codigo) DO UPDATE SET capa_url=excluded.capa_url, ultima_atualizacao_gerada=excluded.ultima_atualizacao_gerada, content_hash=excluded.content_hash, gerado_em=excluded.gerado_em`,
@@ -241,7 +244,7 @@ export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<G
 
   // Upload + registro no banco + cleanup da versão antiga. Lança em caso de erro.
   const processUpload = async (im: ImovelRow, img: Buffer): Promise<void> => {
-    const currentHash = computeContentHash(im);
+    const currentHash = hashOf(im);
     const key = capaKey(im.codigo, currentHash);
     const capaUrl = await uploadPng(key, img);
     await turso.execute({

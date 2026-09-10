@@ -2,7 +2,7 @@ import { mkdirSync } from 'fs';
 import { syncImoveisFromXML } from '../sync/xml-imoveis.js';
 import { gerarCapasImoveis } from '../capas/gerar-capas.js';
 import { gerarFeedFacebook } from '../facebook/gerar-feed.js';
-import { capasConcurrency, feedOutDir } from '../runtime/flags.js';
+import { capasConcurrency, capasFormato, feedOutDir } from '../runtime/flags.js';
 import { getStatus, isCancelRequested, clearCancel, isPipelineRunning, markEnd, markStart, setPipelineRunning } from './status.js';
 export { isPipelineRunning, requestCancel } from './status.js';
 
@@ -101,7 +101,7 @@ async function runCapas(): Promise<void> {
   markStart('capas');
   const concurrency = capasConcurrency();
   try {
-    const r = await gerarCapasImoveis({ concurrency });
+    const r = await gerarCapasImoveis({ concurrency, formato: capasFormato() });
     const sample = r.sampleErrors?.length ? ` | ex: ${r.sampleErrors.slice(0, 2).join(' · ')}` : '';
     const detail = `gerados=${r.gerados} skip=${r.skippados} erros=${r.erros}${sample}`;
     const tentados = r.gerados + r.erros;

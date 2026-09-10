@@ -12,6 +12,7 @@ import { existsSync, readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import {
+  fetchRandomCodigo,
   previewRevision,
   renderPreviewPage,
   watchPreviewTemplate,
@@ -58,6 +59,17 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const u = new URL(req.url ?? '/', `http://localhost:${PORT}`);
     if (u.pathname === '/__revision') {
       send(res, 200, JSON.stringify({ revision: previewRevision() }), 'application/json');
+      return;
+    }
+    if (u.pathname === '/__sortear') {
+      const template = u.searchParams.get('template') ?? defaults.template;
+      const formato = u.searchParams.get('formato') ?? defaults.formato;
+      const exceto = u.searchParams.get('exceto') ?? defaults.codigo;
+      const codigo = await fetchRandomCodigo(exceto);
+      res.writeHead(302, {
+        Location: `/?codigo=${encodeURIComponent(codigo)}&template=${encodeURIComponent(template)}&formato=${encodeURIComponent(formato)}`,
+      });
+      res.end();
       return;
     }
     const codigo = u.searchParams.get('codigo') ?? defaults.codigo;

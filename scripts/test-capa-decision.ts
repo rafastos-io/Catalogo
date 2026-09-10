@@ -48,6 +48,7 @@ console.log('\n[test] computeContentHash');
   const hPrice = computeContentHash(imovel({ valor_venda: 2650001 }));
   ok('hash estável pra dados idênticos', hBase === hSame);
   ok('hash muda quando o preço muda', hBase !== hPrice);
+  ok('hash muda quando a arte muda', hBase !== computeContentHash(base, 'v2-4x5'));
   ok('hash tem 16 chars hex', /^[a-f0-9]{16}$/.test(hBase));
 }
 

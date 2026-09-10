@@ -42,6 +42,28 @@ async function fetchImovel(codigo: string): Promise<ImovelDados> {
   return rs.rows[0] as unknown as ImovelDados;
 }
 
+export async function fetchRandomCodigo(exclude?: string): Promise<string> {
+  const db = getTurso();
+  const rs = exclude
+    ? await db.execute({
+        sql: `SELECT codigo FROM imoveis
+              WHERE status_anuncio = 'Ativo'
+                AND foto_principal_url IS NOT NULL AND foto_principal_url != ''
+                AND codigo != ?
+              ORDER BY RANDOM() LIMIT 1`,
+        args: [exclude.toUpperCase()],
+      })
+    : await db.execute(`
+        SELECT codigo FROM imoveis
+        WHERE status_anuncio = 'Ativo'
+          AND foto_principal_url IS NOT NULL AND foto_principal_url != ''
+        ORDER BY RANDOM() LIMIT 1
+      `);
+  const codigo = rs.rows[0]?.codigo;
+  if (!codigo) throw new Error('Nenhum imóvel com foto');
+  return String(codigo);
+}
+
 function loadTemplateHtml(slug: string): string {
   const p = join(ROOT, 'templates', slug, 'html.html');
   if (!existsSync(p)) throw new Error(`Template não encontrado: ${p}`);
@@ -49,18 +71,19 @@ function loadTemplateHtml(slug: string): string {
 }
 
 function toolbar(codigo: string, template: string, formato: string): string {
+  const q = `template=${template}&formato=${formato}`;
   return `
-<div id="preview-toolbar" style="position:fixed;top:0;left:0;right:0;z-index:99999;background:#111;color:#eee;font:12px/1.4 monospace;padding:8px 12px;display:flex;gap:12px;align-items:center;border-bottom:1px solid #333;">
+<div id="preview-toolbar" style="position:fixed;bottom:16px;left:16px;z-index:99999;background:rgba(10,10,10,.88);color:#eee;font:12px/1.4 monospace;padding:8px 12px;display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(8px);max-width:1040px;">
   <strong>CAPA PREVIEW</strong>
   <span>${codigo}</span>
-  <span>${template}</span>
-  <span>${formato}</span>
-  <span style="opacity:.7">Só leitura — não grava Turso nem SFTP</span>
-  <a href="/?codigo=${codigo}&template=${template}&formato=1080x1080" style="color:#c09c83">1080²</a>
-  <a href="/?codigo=${codigo}&template=${template}&formato=1080x1350" style="color:#c09c83">1350</a>
-  <a href="/?codigo=${codigo}&template=${template}&formato=1080x1920" style="color:#c09c83">1920</a>
-</div>
-<div style="height:36px"></div>`;
+  <a href="/__sortear?${q}&exceto=${codigo}" style="color:#c09c83">outra foto</a>
+  <form method="get" action="/" style="display:flex;gap:6px;align-items:center;margin:0;">
+    <input type="hidden" name="template" value="${template}">
+    <input type="hidden" name="formato" value="${formato}">
+    <input name="codigo" value="${codigo}" style="width:92px;background:#1a1a1b;color:#eee;border:1px solid #444;padding:4px 6px;font:12px monospace;">
+    <button type="submit" style="background:#c09c83;color:#222;border:0;padding:4px 8px;cursor:pointer;font:12px monospace;">ir</button>
+  </form>
+</div>`;
 }
 
 function liveReloadScript(currentRevision: number): string {
