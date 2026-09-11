@@ -219,6 +219,22 @@ export function substituteTokens(html: string, tokens: TokenMap): string {
   });
 }
 
+/**
+ * Template canônico: 1080×1080, .safe 980×980 com 50px de margem.
+ * 4:5 (1080×1350) continua disponível via injeção se o formato pedir.
+ */
+function applyFormatoLayout(html: string, formato: string): string {
+  const withFmt = html.replace(/data-fmt="[^"]*"/, `data-fmt="${formato}"`);
+  if (formato !== '1080x1350') return withFmt;
+  const portraitCss = `
+html, body { height: 1350px; }
+.foto { height: 1350px; }
+.vinheta { height: 820px; }
+.safe { top: 185px; left: 50px; width: 980px; height: 980px; }
+`;
+  return withFmt.replace('</style>', `${portraitCss}</style>`);
+}
+
 /** Aplica tokens no HTML do template e devolve HTML pronto pro screenshot. */
 export function renderTemplateHtml(
   templateHtml: string,
@@ -228,5 +244,5 @@ export function renderTemplateHtml(
   formato: string,
 ): string {
   const tokens = buildTokenMap(im, brand, logoDataUri, formato);
-  return substituteTokens(templateHtml, tokens);
+  return applyFormatoLayout(substituteTokens(templateHtml, tokens), formato);
 }

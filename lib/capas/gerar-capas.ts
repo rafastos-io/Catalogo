@@ -16,7 +16,7 @@ import { isCancelRequested, setJobDetail } from '../jobs/status.js';
 export interface GerarCapasOptions {
   limit?: number; // se setado, processa só N imóveis (dry-run)
   concurrency?: number; // padrão 10
-  formato?: string; // padrão '1080x1350'
+  formato?: string; // padrão '1080x1080'
   templateSlug?: string; // padrão 'imovel-estatico-03'
   force?: boolean; // se true, ignora incremental e regera tudo
 }
@@ -52,7 +52,7 @@ interface ImovelRow extends ImovelDados {
 
 export async function gerarCapasImoveis(opts: GerarCapasOptions = {}): Promise<GerarCapasResult> {
   const start = Date.now();
-  const formato = opts.formato ?? '1080x1350';
+  const formato = opts.formato ?? '1080x1080';
   const templateSlug = opts.templateSlug ?? 'imovel-estatico-03';
   const concurrency = opts.concurrency ?? 10;
   const force = opts.force ?? false;
