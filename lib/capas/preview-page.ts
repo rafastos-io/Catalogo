@@ -121,7 +121,8 @@ export async function renderPreviewPage(
 export function watchPreviewTemplate(template: string): void {
   const templateDir = join(ROOT, 'templates', template);
   const brandKit = join(ROOT, 'lib', 'capas', 'brand-kit.ts');
-  for (const p of [templateDir, brandKit]) {
+  const tokenRenderer = join(ROOT, 'lib', 'capas', 'token-renderer.ts');
+  for (const p of [templateDir, brandKit, tokenRenderer]) {
     if (!existsSync(p)) continue;
     watch(p, { recursive: true }, () => {
       bumpPreviewRevision();

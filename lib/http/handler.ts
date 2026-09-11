@@ -65,7 +65,7 @@ async function handlePreview(req: IncomingMessage, res: ServerResponse): Promise
   }
   const codigo = u.searchParams.get('codigo') ?? 'AP0221';
   const template = u.searchParams.get('template') ?? 'imovel-estatico-03';
-  const formato = u.searchParams.get('formato') ?? '1080x1350';
+  const formato = u.searchParams.get('formato') ?? '1080x1080';
   const html = await renderPreviewPage(codigo, template, formato, true);
   send(res, 200, html, 'text/html; charset=utf-8');
 }

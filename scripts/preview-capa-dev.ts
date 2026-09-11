@@ -41,7 +41,7 @@ function parseArgs() {
   return {
     codigo: get('codigo', 'AP0221'),
     template: get('template', 'imovel-estatico-03'),
-    formato: get('formato', '1080x1350'),
+    formato: get('formato', '1080x1080'),
   };
 }
 

@@ -1,7 +1,7 @@
 /**
  * scripts/gerar-capas-imoveis.ts
  *
- * Gera capas (JPG 1080x1350 q85) para os imóveis do catálogo usando o template
+ * Gera capas (JPG 1080x1080 q85) para os imóveis do catálogo usando o template
  * imovel-estatico-03. Sobe os JPGs via SFTP para a Hostinger e registra em
  * capas_imoveis (Turso) para controle incremental.
  *
@@ -37,7 +37,7 @@ async function main() {
   const limit = parseNum('limit', 0);
   const concurrency = parseNum('concurrency', 10);
   const force = parseBool('force');
-  const formato = parseArg('formato') ?? '1080x1350';
+  const formato = parseArg('formato') ?? '1080x1080';
   const templateSlug = parseArg('template') ?? 'imovel-estatico-03';
 
   console.log('[capas] Iniciando geração de capas...');

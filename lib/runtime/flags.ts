@@ -19,8 +19,8 @@ export function capasConcurrency(): number {
   return Number.isFinite(n) && n > 0 ? Math.min(n, 2) : 1;
 }
 
-/** Formato do JPG de capa. A arte nova é 4:5. */
+/** Formato do JPG de capa. Padrão 1:1 — o catálogo da Meta corta 4:5. */
 export function capasFormato(): string {
   const v = process.env.CAPAS_FORMATO?.trim();
-  return v || '1080x1350';
+  return v || '1080x1080';
 }
