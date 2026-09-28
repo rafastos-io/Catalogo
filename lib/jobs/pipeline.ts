@@ -3,15 +3,22 @@ import { syncImoveisFromXML } from '../sync/xml-imoveis.js';
 import { gerarCapasImoveis } from '../capas/gerar-capas.js';
 import { gerarFeedFacebook } from '../facebook/gerar-feed.js';
 import { capasConcurrency, capasFormato, feedOutDir } from '../runtime/flags.js';
-import { getStatus, isCancelRequested, clearCancel, isPipelineRunning, markEnd, markStart, setPipelineRunning } from './status.js';
+import { getStatus, isCancelRequested, clearCancel, isPipelineRunning, markEnd, markStart, setPipelineRunning, type JobName } from './status.js';
 export { isPipelineRunning, requestCancel } from './status.js';
+
+type StageName = Exclude<JobName, 'pipeline'>;
+type StageFn = () => Promise<void>;
+
+export type PipelineStages = Record<StageName, StageFn>;
 
 /**
  * Sequência noturna: sync → capas → feed.
  * O feed só roda depois das capas (não no relógio das 02:00), senão o CSV
  * sairia sem as capas geradas neste ciclo.
+ * Se uma etapa falha, o agregado fica não saudável e as seguintes não rodam.
+ * `stages` existe para o teste local injetar etapas falsas, sem Turso nem storage.
  */
-export async function runNightlyPipeline(): Promise<void> {
+export async function runNightlyPipeline(stages: PipelineStages = defaultStages): Promise<void> {
   if (isPipelineRunning()) {
     console.warn('[pipeline] Já em andamento — ignorando disparo extra.');
     return;
@@ -25,14 +32,23 @@ export async function runNightlyPipeline(): Promise<void> {
     `[pipeline] Início ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })} BRT`,
   );
 
+  let failedStage: StageName | null = null;
   try {
-    if (!isCancelRequested()) await runIsolated('sync', runSync);
-    if (!isCancelRequested()) await runIsolated('capas', runCapas);
-    if (!isCancelRequested()) await runIsolated('feed', runFeed);
+    for (const name of ['sync', 'capas', 'feed'] as const) {
+      if (isCancelRequested()) break;
+      const ok = await runIsolated(name, stages[name]);
+      if (!ok) {
+        failedStage = name;
+        break;
+      }
+    }
     const sec = ((Date.now() - started) / 1000).toFixed(1);
     if (isCancelRequested()) {
       markEnd('pipeline', false, `cancelado após ${sec}s`);
       console.warn(`[pipeline] Cancelado após ${sec}s`);
+    } else if (failedStage) {
+      markEnd('pipeline', false, `falhou em ${failedStage} após ${sec}s`);
+      console.error(`[pipeline] Falhou em ${failedStage} após ${sec}s`);
     } else {
       markEnd('pipeline', true, `ok em ${sec}s`);
       console.log(`[pipeline] Concluído em ${sec}s`);
@@ -53,11 +69,23 @@ export async function runNightlyPipeline(): Promise<void> {
   }
 }
 
-async function runIsolated(name: string, fn: () => Promise<void>): Promise<void> {
+const defaultStages: PipelineStages = {
+  sync: runSync,
+  capas: runCapas,
+  feed: runFeed,
+};
+
+async function runIsolated(name: StageName, fn: StageFn): Promise<boolean> {
   try {
     await fn();
+    return getStatus().jobs[name].ok === true;
   } catch (err) {
-    console.error(`[pipeline] etapa ${name} falhou:`, err instanceof Error ? err.message : err);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[pipeline] etapa ${name} falhou:`, msg);
+    if (getStatus().jobs[name].ok !== false) {
+      markEnd(name, false, msg);
+    }
+    return false;
   }
 }
 

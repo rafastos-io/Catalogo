@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { feedOutDir, isSyncDesligado } from '../runtime/flags.js';
+import { assessFeedFreshness, productionHealthOk } from '../jobs/feed-freshness.js';
 import { getStatus, requestCancel } from '../jobs/status.js';
 import { isPipelineRunning, runNightlyPipeline } from '../jobs/pipeline.js';
 import { previewRevision, renderPreviewPage } from '../capas/preview-page.js';
@@ -35,6 +36,12 @@ function requireTriggerToken(u: URL, res: ServerResponse): boolean {
     return false;
   }
   return true;
+}
+
+function feedXmlMtime(): Date | null {
+  const path = join(feedOutDir(), 'facebook-home-listings.xml');
+  if (!existsSync(path)) return null;
+  return statSync(path).mtime;
 }
 
 function serveFeedFile(res: ServerResponse, fileName: string, type: string): void {
@@ -73,11 +80,15 @@ async function handlePreview(req: IncomingMessage, res: ServerResponse): Promise
 async function handleProduction(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const u = parseQuery(req.url ?? '/');
   if (u.pathname === '/health' || u.pathname === '/') {
+    const status = getStatus();
+    const freshness = assessFeedFreshness(feedXmlMtime(), new Date());
     json(res, 200, {
-      ok: true,
+      ok: productionHealthOk(freshness.feedStale, status.jobs.pipeline.ok),
       sync_desligado: false,
       mode: 'production',
-      ...getStatus(),
+      feedAgeHours: freshness.feedAgeHours,
+      feedStale: freshness.feedStale,
+      ...status,
     });
     return;
   }

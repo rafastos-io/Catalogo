@@ -13,5 +13,9 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["lib/**/*.ts", "scripts/**/*.ts"]
+  "include": ["lib/**/*.ts", "scripts/**/*.ts"],
+  "exclude": [
+    "scripts/auditoria-capas.ts",
+    "scripts/test-sftp-combos.ts"
+  ]
 }

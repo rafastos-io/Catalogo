@@ -11,3 +11,6 @@ CREDENCIAIS-HOSTINGER.md
 dist/
 *.tsbuildinfo
 out/
+auth
+auth-wal
+scripts/test-sftp-combos.ts

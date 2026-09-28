@@ -81,3 +81,13 @@ export function getStatus() {
     jobs: snapshots,
   };
 }
+
+/** Zera o snapshot em memória. Usado pelos testes locais; não persiste nada. */
+export function resetStatus(): void {
+  snapshots.sync = empty('sync');
+  snapshots.capas = empty('capas');
+  snapshots.feed = empty('feed');
+  snapshots.pipeline = empty('pipeline');
+  pipelineRunning = false;
+  cancelRequested = false;
+}
