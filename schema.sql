@@ -106,3 +106,13 @@ CREATE INDEX IF NOT EXISTS idx_imoveis_status_anuncio ON imoveis(status_anuncio)
 CREATE INDEX IF NOT EXISTS idx_imoveis_cidade_bairro ON imoveis(cidade, bairro);
 CREATE INDEX IF NOT EXISTS idx_imoveis_finalidade ON imoveis(finalidade);
 CREATE INDEX IF NOT EXISTS idx_imoveis_tipo_imovel ON imoveis(tipo_imovel);
+
+-- Contrato do código que grava capas (gerar-capas.ts).
+-- A tabela já existe no Turso de produção; este arquivo não é aplicado sozinho.
+CREATE TABLE IF NOT EXISTS capas_imoveis (
+  codigo TEXT PRIMARY KEY,
+  capa_url TEXT,
+  ultima_atualizacao_gerada TEXT,
+  content_hash TEXT,
+  gerado_em TEXT
+);

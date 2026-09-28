@@ -18,6 +18,7 @@
     "storage:limpar-orfaos": "tsx scripts/limpar-storage-orfaos.ts",
     "popular-content-hash": "tsx scripts/popular-content-hash.ts",
     "test:capas": "tsx scripts/test-capa-decision.ts",
+    "test:pipeline": "tsx scripts/test-pipeline-health.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
